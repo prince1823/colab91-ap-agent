@@ -39,6 +39,8 @@ Thumbs.db
 !tests/sample_data.csv
 # Benchmark datasets (allow canonical inputs while keeping other CSVs ignored)
 !benchmarks/**/input.csv
+# Ignore large expected.txt files
+benchmarks/**/expected.txt
 
 # Jupyter
 .ipynb_checkpoints/
