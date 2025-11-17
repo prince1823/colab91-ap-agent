@@ -50,6 +50,7 @@ build/
 *.egg-info/
 
 /cube_data/
+/extraction_outputs/
 /results/
 /260925ARC03379/
 /ops/
