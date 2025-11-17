@@ -72,16 +72,26 @@ Results are saved to `results/` directory.
 
 ### Running Benchmarks
 
+**Setup**: Create the benchmarks folder structure locally:
+
 ```bash
-# Run benchmark on default folder
-PYTHONPATH=. poetry run python benchmarks/run_benchmark.py default
+mkdir -p benchmarks/{folder_name}
 ```
 
-Benchmark expects:
+For each benchmark folder, create:
 - `benchmarks/{folder}/input.csv` - Transaction data with `taxonomy_path` column
 - `benchmarks/{folder}/expected.txt` - One expected classification per line (format: "L1|L2|L3|...")
 
+**Running a benchmark**:
+
+```bash
+# Run benchmark on a specific folder
+PYTHONPATH=. poetry run python benchmarks/run_benchmark.py {folder_name}
+```
+
 Output: `benchmarks/{folder}/output.csv` with input data, expected output, pipeline output, column mappings, and supplier profiles.
+
+**Note**: The `benchmarks/` folder is gitignored. Create it locally as needed for your benchmarks.
 
 ### Using the Pipeline
 
@@ -116,10 +126,10 @@ core/
 └── config.py                     # Configuration management
 
 tests/                            # Test scripts
-benchmarks/                       # Benchmark data and runner
+benchmarks/                       # Benchmark data and runner (create locally)
 taxonomies/                       # Client taxonomy YAML files
-extraction_outputs/               # Input transaction data
-results/                          # Test and benchmark outputs
+extraction_outputs/               # Input transaction data (gitignored)
+results/                          # Test and benchmark outputs (gitignored)
 ```
 
 ## Key Features
