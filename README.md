@@ -82,6 +82,22 @@ For each benchmark folder, create:
 - `benchmarks/{folder}/input.csv` - Transaction data with `taxonomy_path` column
 - `benchmarks/{folder}/expected.txt` - One expected classification per line (format: "L1|L2|L3|...")
 
+**Sample `input.csv`**:
+
+| Supplier Name | Vendor Name | GL Description | Line Description | Department | Amount | taxonomy_path |
+|--------------|-------------|----------------|------------------|------------|--------|---------------|
+| Microsoft Corporation | Microsoft | Software Costs | Office 365 Subscription | IT | 5000.00 | taxonomies/FOX_20230816_161348.yaml |
+| Cardinal Health | Cardinal Health | Medical Supplies | Surgical Gloves | Clinical | 2500.00 | taxonomies/FOX_20230816_161348.yaml |
+| AT&T | AT&T | Telecom Services | Phone Line Charges | Operations | 1200.00 | taxonomies/FOX_20230816_161348.yaml |
+
+**Sample `expected.txt`** (one classification per line, matching row order):
+
+| Row | Expected Classification |
+|-----|------------------------|
+| 1 | `it & telecom\|software\|software licenses fees` |
+| 2 | `clinical\|clinical supplies\|medical-surgical supplies\|medical-surgical supplies` |
+| 3 | `it & telecom\|telecom\|data line charges` |
+
 **Running a benchmark**:
 
 ```bash
@@ -89,9 +105,24 @@ For each benchmark folder, create:
 PYTHONPATH=. poetry run python benchmarks/run_benchmark.py {folder_name}
 ```
 
-Output: `benchmarks/{folder}/output.csv` with input data, expected output, pipeline output, column mappings, and supplier profiles.
+**Output**: `benchmarks/{folder}/output.csv` contains:
 
-**Note**: The `benchmarks/` folder is gitignored. Create it locally as needed for your benchmarks.
+| Column | Description |
+|--------|-------------|
+| All original columns | All columns from `input.csv` (preserved as-is) |
+| `expected_output` | Expected classification from `expected.txt` (format: "L1\|L2\|L3\|...") |
+| `pipeline_output` | Actual classification produced by the pipeline (format: "L1\|L2\|L3\|...") |
+| `columns_used` | JSON string of column mappings from canonicalization (maps canonical columns to client column names) |
+| `supplier_profile` | JSON string of supplier profile from research agent (includes official_business_name, industry, products_services, website_url, etc.) |
+| `error` | Error message if processing failed (empty string if successful) |
+
+**Example output**:
+
+| Supplier Name | GL Description | Line Description | Amount | taxonomy_path | expected_output | pipeline_output | columns_used | supplier_profile | error |
+|--------------|----------------|------------------|--------|---------------|-----------------|----------------|--------------|-----------------|-------|
+| Microsoft Corporation | Software Costs | Office 365 Subscription | 5000.00 | taxonomies/FOX_20230816_161348.yaml | `it & telecom\|software\|software licenses fees` | `it & telecom\|software\|software licenses fees` | `{"supplier_name": "Supplier Name", "gl_description": "GL Description"}` | `{"supplier_name": "Microsoft Corporation", "industry": "Technology"}` | |
+
+**Note**: The `benchmarks/` folder is gitignored. Create it locally as needed for your benchmarks. The `input.csv` can have any client-specific column names - they will be automatically canonicalized by the pipeline.
 
 ### Using the Pipeline
 
