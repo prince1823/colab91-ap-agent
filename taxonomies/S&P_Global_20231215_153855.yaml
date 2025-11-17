@@ -1,0 +1,237 @@
+client_name: S&P Global
+project_id: S&P_Global_20231215_153855
+max_taxonomy_depth: 3
+available_levels:
+- L1
+- L2
+- L3
+taxonomy:
+- exceptions|charity organizations|charity organizations
+- exceptions|employee expense claim|employee expense claim
+- exceptions|executive board payment|executive board payment
+- exceptions|fines and penalties|fines and penalties
+- exceptions|government / taxes|government / taxes
+- exceptions|payments to employees|payments to employees
+- exceptions|refunds|refunds
+- exceptions|unclaimed property|unclaimed property
+- general & administrative|corporate communications|gov't and public affairs advocacy
+  firm
+- general & administrative|corporate communications|photograph permissions
+- general & administrative|corporate communications|public relations services
+- general & administrative|corporate communications|technical writing services
+- general & administrative|corporate services|associations & memberships
+- general & administrative|corporate services|catering services for internal meetings
+- general & administrative|corporate services|document management, storage & destruction
+- general & administrative|corporate services|networked printing (mfd's)
+- general & administrative|corporate services|office supplies
+- general & administrative|corporate services|postal, shipping & courier
+- general & administrative|corporate services|printing services
+- general & administrative|corporate services|subscriptions (news, journals etc)
+- general & administrative|corporate services|vehicle services and leases
+- general & administrative|financial services|banks & lending institutions
+- general & administrative|financial services|brokers, advisers & investment services
+- general & administrative|financial services|citibank card charges
+- general & administrative|financial services|collection & credit services
+- general & administrative|financial services|corporate credit card services (external
+  link)
+- general & administrative|financial services|corporate service legal settlement
+- general & administrative|financial services|investor relations services
+- general & administrative|financial services|payment merchant
+- general & administrative|financial services|regulator
+- general & administrative|financial services|royalties
+- general & administrative|financial services|sales commissions
+- general & administrative|risk & insurance|claims management
+- general & administrative|risk & insurance|corporate insurance
+- general & administrative|risk & insurance|insurance brokers
+- general & administrative|risk & insurance|risk consulting
+- general & administrative|risk & insurance|travel risk management
+- human resources|employee benefits|dependency care
+- human resources|employee benefits|employee benefits general
+- human resources|employee benefits|employee recognition
+- human resources|employee benefits|financial benefits administration
+- human resources|employee benefits|gym, fitness & well being
+- human resources|employee benefits|pharmacy
+- human resources|employee benefits|retirement benefits
+- human resources|employee benefits|tuition assistance
+- human resources|employee benefits|wellness administration
+- human resources|learning & development|executive coaching services
+- human resources|learning & development|professional development services
+- human resources|learning & development|technical training services
+- human resources|medical & employee insurance|group dental insurance
+- human resources|medical & employee insurance|group health insurance
+- human resources|medical & employee insurance|group travel insurance
+- human resources|medical & employee insurance|life insurance
+- human resources|medical & employee insurance|medical services
+- human resources|medical & employee insurance|vision insurance
+- human resources|workforce management|background screening services
+- human resources|workforce management|employee outplacement services
+- human resources|workforce management|executive search firms
+- human resources|workforce management|general search
+- human resources|workforce management|global mobility services
+- human resources|workforce management|payroll services
+- it & telecom|it hardware|computer accessories
+- it & telecom|it hardware|computer displays/monitors
+- it & telecom|it hardware|desktop computers
+- it & telecom|it hardware|it hardware - servers
+- it & telecom|it hardware|it hardware equipment
+- it & telecom|it services|application development & testing
+- it & telecom|it services|cloud management services
+- it & telecom|it services|computer leasing
+- it & telecom|it services|data center services
+- it & telecom|it services|infrastructure services outsourcing
+- it & telecom|it services|it hardware maintenance
+- it & telecom|it services|it security
+- it & telecom|it services|it systems integration services
+- it & telecom|it services|software maintenance
+- it & telecom|software/saas|accounting software/saas
+- it & telecom|software/saas|application development software/saas
+- it & telecom|software/saas|application development, testing & performance monitoring
+- it & telecom|software/saas|collaboration & productivity software
+- it & telecom|software/saas|collaboration & work management software
+- it & telecom|software/saas|communications server software/saas
+- it & telecom|software/saas|communications software
+- it & telecom|software/saas|compliance management software solution
+- it & telecom|software/saas|content authoring and editing software/saas
+- it & telecom|software/saas|data migration software
+- it & telecom|software/saas|database management system software/saas
+- it & telecom|software/saas|desktop communications software/saas
+- it & telecom|software/saas|developer productivity software
+- it & telecom|software/saas|erp software/saas
+- it & telecom|software/saas|expert system software/saas
+- it & telecom|software/saas|facilities management software/saas
+- it & telecom|software/saas|general software/saas request
+- it & telecom|software/saas|human resources software/saas
+- it & telecom|software/saas|learning & training software/saas
+- it & telecom|software/saas|learning management systems
+- it & telecom|software/saas|license management software/saas
+- it & telecom|software/saas|mathematical computing software
+- it & telecom|software/saas|network security & vpn equipment software/saas
+- it & telecom|software/saas|procurement & vendor management software/saas
+- it & telecom|software/saas|reporting analytics & visualization software/saas
+- it & telecom|software/saas|risk management software/saas
+- it & telecom|software/saas|robotics & automated workflow software/saas
+- it & telecom|software/saas|sales & marketing software/saas
+- it & telecom|software/saas|sales enablement software
+- it & telecom|software/saas|security software/saas
+- it & telecom|software/saas|software solution data analytics
+- it & telecom|software/saas|translation software
+- it & telecom|software/saas|video & net conferencing software/saas
+- it & telecom|software/saas|web content management software/saas
+- it & telecom|telecoms & network|cellular services
+- it & telecom|telecoms & network|fixed line services
+- it & telecom|telecoms & network|internet access, telephone, and television service
+- it & telecom|telecoms & network|network hardware
+- it & telecom|telecoms & network|telecoms expense management
+- market data|data terminals|data terminals
+- market data|energy data|energy data
+- market data|information services|information services
+- market data|market data - data fees|market data - data fees
+- market data|market data|market data
+- market data|market research services|market research services
+- market data|stock exchange fees|stock exchange fees
+- marketing & advertising|advertising|advertising / media placement
+- marketing & advertising|advertising|advertising design / production
+- marketing & advertising|advertising|print advertising
+- marketing & advertising|design, photography & av services|art & design services
+- marketing & advertising|design, photography & av services|editorial services
+- marketing & advertising|design, photography & av services|photography & av services
+- marketing & advertising|direct mail & promotional|direct mail advertising services
+- marketing & advertising|direct mail & promotional|mailing services
+- marketing & advertising|direct mail & promotional|promotional print services
+- marketing & advertising|direct mail & promotional|promotional products/awards
+- marketing & advertising|marketing agencies|advertising agencies
+- marketing & advertising|marketing agencies|brand identity agencies
+- marketing & advertising|marketing agencies|digital advertising agency
+- marketing & advertising|marketing agencies|digital/social media agencies
+- marketing & advertising|marketing agencies|marketing agencies
+- marketing & advertising|marketing services|brand management services
+- marketing & advertising|marketing services|customer engagement services
+- marketing & advertising|marketing services|marketing incentives
+- marketing & advertising|marketing services|search engine optimization
+- professional services|accounting, auditing & actuarial services|accounting, auditing
+  & actuarial services
+- professional services|consulting|change management consulting
+- professional services|consulting|communications consulting
+- professional services|consulting|data management consultancy
+- professional services|consulting|data mining consulting services
+- professional services|consulting|energy & utility consulting services
+- professional services|consulting|general it consulting services
+- professional services|consulting|health & safety advisory
+- professional services|consulting|health care consulting
+- professional services|consulting|human resources consulting
+- professional services|consulting|management consulting services
+- professional services|consulting|marketing consulting services
+- professional services|consulting|strategy consulting
+- professional services|legal services|legal services
+- professional services|other professional services|asset management-sustainability
+  investing
+- professional services|other professional services|compensation & benefits planning
+- professional services|other professional services|financial advisory services
+- professional services|other professional services|graphic design services
+- professional services|other professional services|independent contractor
+- professional services|other professional services|investment management services
+- professional services|other professional services|mergers & acquisitions advisory
+- professional services|other professional services|notary services
+- professional services|other professional services|other professional services
+- professional services|other professional services|stringer retainers
+- professional services|other professional services|stringer stories - general
+- professional services|other professional services|stringer stories- general (platts)
+- professional services|outsourcing services|accounts payable & receivable services
+- professional services|outsourcing services|call center services
+- professional services|outsourcing services|marketing services
+- professional services|outsourcing services|outside services - order mgmt.
+- professional services|outsourcing services|pension administration
+- professional services|outsourcing services|transcription
+- professional services|outsourcing services|translation & interpretation
+- professional services|temporary / contingent labor|temporary / contingent labor
+- real estate & facilities management|architecture services|architecture services
+- real estate & facilities management|facilities maintenance services|building maintenance
+  & repair
+- real estate & facilities management|facilities maintenance services|cafeteria management
+  services
+- real estate & facilities management|facilities maintenance services|cleaning services
+- real estate & facilities management|facilities maintenance services|equipment maintenance
+  services
+- real estate & facilities management|facilities maintenance services|facilities maintenance
+  services general
+- real estate & facilities management|facilities maintenance services|recycling /
+  waste management
+- real estate & facilities management|facilities maintenance services|security systems
+  & maintenance
+- real estate & facilities management|facilities maintenance services|waste management
+- real estate & facilities management|facilities management|employee office transport
+- real estate & facilities management|facilities management|furniture
+- real estate & facilities management|facilities management|real estate design & construction
+- real estate & facilities management|facilities management|real estate leases & lease
+  management
+- real estate & facilities management|facilities management|security services
+- real estate & facilities management|utilities|utilities & energy management
+- travel & entertainment|meetings & events|av & sound suppliers
+- travel & entertainment|meetings & events|catering services for external meetings
+  and conferences
+- travel & entertainment|meetings & events|conferencing services
+- travel & entertainment|meetings & events|event attendance
+- travel & entertainment|meetings & events|event facilities
+- travel & entertainment|meetings & events|event planning & production services
+- travel & entertainment|meetings & events|exhibit & conference sponsorship
+- travel & entertainment|meetings & events|general meetings & events services
+- travel & entertainment|meetings & events|leisure & entertainment
+- travel & entertainment|meetings & events|speakers & performers
+- travel & entertainment|travel|air travel
+- travel & entertainment|travel|citibank card reimbursement
+- travel & entertainment|travel|corporate travel management
+- travel & entertainment|travel|food/meals
+- travel & entertainment|travel|gasoline and fuel
+- travel & entertainment|travel|ground transportation
+- travel & entertainment|travel|hotel & lodging
+- travel & entertainment|travel|limousine & town car services
+- travel & entertainment|travel|recreation & entertainment
+- travel & entertainment|travel|rental cars
+- travel & entertainment|travel|t&e expenses for non-employees
+- travel & entertainment|travel|tolls & parking expenses
+- travel & entertainment|travel|travel general
+- travel & entertainment|travel|visa services
+- unclassified|unclassified|unclassified
+override_rules: []
+note: Each taxonomy path is pipe-separated (L1|L2|L3|...). Select the most specific
+  path you're confident about.

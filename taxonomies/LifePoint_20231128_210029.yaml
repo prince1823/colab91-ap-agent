@@ -1,0 +1,184 @@
+client_name: LifePoint Healthcare
+project_id: LifePoint_20231128_210029
+max_taxonomy_depth: 4
+available_levels:
+- L1
+- L2
+- L3
+- L4
+taxonomy:
+- clinical|clinical equipment|clinical equipment rental|clinical equipment rental
+- clinical|clinical equipment|diagnostic imaging equipment|diagnostic imaging equipment
+- clinical|clinical equipment|medical devices & major medical equipment|medical devices
+  & major medical equipment
+- clinical|clinical equipment|surgical equipment|surgical equipment
+- clinical|clinical services|clinical services other|clinical services other
+- clinical|clinical services|clinical staffing|clinical staffing
+- clinical|clinical services|imaging services|imaging services
+- clinical|clinical services|patient transportation|patient transportation
+- clinical|clinical supplies|clinical supplies other|clinical supplies other
+- clinical|clinical supplies|implants and prosthetics|implants and prosthetics
+- clinical|clinical supplies|medical-surgical supplies|medical-surgical supplies
+- clinical|clinical supplies|organ, tissue & blood products|organ, tissue & blood
+  products
+- clinical|hospitality services|cafeteria & catering services|cafeteria & catering
+  services
+- clinical|hospitality services|janitorial / cleaning services|janitorial / cleaning
+  services
+- clinical|hospitality services|laundry & linen services|laundry & linen services
+- clinical|it - clinical|clinical decision support tools|clinical decision support
+  tools
+- clinical|it - clinical|ehr/emr|ehr/emr
+- clinical|it - clinical|it - clinical|it - clinical other
+- clinical|it - clinical|practice management software|practice management software
+- clinical|it - clinical|telehealth|telehealth
+- clinical|laboratory|laboratory services|laboratory services
+- clinical|laboratory|laboratory supplies & equipment|laboratory supplies
+- clinical|laboratory|laboratory supplies & equipment|laboratory supplies & equipment
+- clinical|laboratory|reference lab tests|reference lab tests
+- clinical|pharmacy|pharmacy|pharmacy
+- clinical|pharmacy|prescription drugs|prescription drugs
+- clinical|professional services - clinical|clinical transcription & translation|clinical
+  transcription & translation
+- clinical|professional services - clinical|professional services - clinical - others|professional
+  services - clinical - others
+- clinical|professional services - clinical|revenue cycle management (rcm) services|collection
+  agency services
+- clinical|professional services - clinical|revenue cycle management (rcm) services|revenue
+  cycle management (rcm) services
+- exempt|exempt|bank fees|bank fees
+- exempt|exempt|charitable contributions & grants|charitable contributions & grants
+- exempt|exempt|doctors/physicians|doctors/physicians
+- exempt|exempt|employee related|employee related other
+- exempt|exempt|exempt other|exempt other
+- exempt|exempt|healthcare providers|healthcare providers
+- exempt|exempt|intercompany|intercompany
+- exempt|exempt|license & permits|license & permits
+- exempt|exempt|patient care|behavioral health
+- exempt|exempt|patient care|cardiovascular services
+- exempt|exempt|patient care|dialysis/renal care
+- exempt|exempt|patient care|lithotripsy
+- exempt|exempt|patient care|patient care
+- exempt|exempt|patient care|radiology services
+- exempt|exempt|patient care|rehabilitation services
+- exempt|exempt|patient care|urology
+- exempt|exempt|patient care|wound care
+- exempt|exempt|patient refunds|patient refunds
+- exempt|exempt|settlements & dues|settlements & dues
+- exempt|exempt|taxes and regulatory fees|taxes and regulatory fees other
+- exempt|exempt|unions|unions
+- non-clinical|facilities|building materials|building fixtures
+- non-clinical|facilities|building materials|doors & windows
+- non-clinical|facilities|building materials|lumber & millwork goods
+- non-clinical|facilities|construction services|architectural & engineering services
+- non-clinical|facilities|construction services|contractors
+- non-clinical|facilities|facilities equipment|equipment rent
+- non-clinical|facilities|facilities equipment|facilities equipment purchases & maintenance
+- non-clinical|facilities|facilities equipment|power generation equipment
+- non-clinical|facilities|facilities maintenance services|electrical services
+- non-clinical|facilities|facilities maintenance services|elevator - escalator services
+- non-clinical|facilities|facilities maintenance services|fire alarm & life safety
+  systems
+- non-clinical|facilities|facilities maintenance services|flooring
+- non-clinical|facilities|facilities maintenance services|hvac supplies & services
+- non-clinical|facilities|facilities maintenance services|landscaping & snow removal
+- non-clinical|facilities|facilities maintenance services|locksmiths
+- non-clinical|facilities|facilities maintenance services|pest control
+- non-clinical|facilities|facilities maintenance services|plumbing services
+- non-clinical|facilities|facilities maintenance services|roofing services
+- non-clinical|facilities|facilities maintenance services|waste management
+- non-clinical|facilities|facilities maintenance services|water treatment
+- non-clinical|facilities|facilities maintenance services|window washing
+- non-clinical|facilities|facilities management|rent and leases
+- non-clinical|facilities|facilities management|security services
+- non-clinical|facilities|mro supplies|electrical supplies
+- non-clinical|facilities|mro supplies|filters
+- non-clinical|facilities|mro supplies|general industrial supplies
+- non-clinical|facilities|mro supplies|janitorial/cleaning supplies
+- non-clinical|facilities|mro supplies|lighting
+- non-clinical|facilities|mro supplies|medical supplies
+- non-clinical|facilities|mro supplies|mro supplies - other
+- non-clinical|facilities|mro supplies|paints, stains, sealants
+- non-clinical|facilities|mro supplies|pipes, valves, fittings, & plumbing supplies
+- non-clinical|facilities|mro supplies|safety supplies, ppe
+- non-clinical|facilities|mro supplies|uniforms
+- non-clinical|facilities|mro supplies|water treatment supplies & equipment
+- non-clinical|facilities|utilities|energy - electricity, heating oil & natural gas
+- non-clinical|facilities|utilities|utilities other
+- non-clinical|facilities|utilities|water & sewer
+- non-clinical|general & administrative|financial services|electronic payment processing
+- non-clinical|general & administrative|financial services|financial services other
+- non-clinical|general & administrative|general & administrative|general & administrative
+  other
+- non-clinical|general & administrative|insurance|corporate insurance
+- non-clinical|general & administrative|insurance|workmen's compensation insurance
+- non-clinical|general & administrative|office supplies & equipment|office equipment
+- non-clinical|general & administrative|office supplies & equipment|office supplies
+- non-clinical|general & administrative|office support|copy machines & copier services
+- non-clinical|general & administrative|office support|office furniture
+- non-clinical|general & administrative|office support|subscriptions and dues
+- non-clinical|general & administrative|services|document management & shredding services
+- non-clinical|general & administrative|services|flowers & gifts
+- non-clinical|general & administrative|services|medical data services
+- non-clinical|human resources|employee benefits|employee benefits other
+- non-clinical|human resources|employee benefits|pbm
+- non-clinical|human resources|employee benefits|retirement and pension plans
+- non-clinical|human resources|insurance / medical benefit|medical, dental and life
+  insurance
+- non-clinical|human resources|relocation services|moving/relocation
+- non-clinical|human resources|workforce management|employee screening, background
+  checks, drug testing
+- non-clinical|human resources|workforce management|payroll administration services
+- non-clinical|human resources|workforce management|recruiting
+- non-clinical|human resources|workforce management|training
+- non-clinical|it & telecom|it products & services|cloud hosting services
+- non-clinical|it & telecom|it products & services|cybersecurity/risk
+- non-clinical|it & telecom|it products & services|data center services
+- non-clinical|it & telecom|it products & services|it consulting
+- non-clinical|it & telecom|it products & services|it hardware & maintenance
+- non-clinical|it & telecom|it products & services|it products & services - general
+- non-clinical|it & telecom|it products & services|it resellers (vars)
+- non-clinical|it & telecom|it products & services|it temporary labor
+- non-clinical|it & telecom|it products & services|servers & networking equipment
+- non-clinical|it & telecom|software|software & maintenance - general
+- non-clinical|it & telecom|software|software & maintenance - hcm
+- non-clinical|it & telecom|telecom|call center & help desk services
+- non-clinical|it & telecom|telecom|telecom equipment & maintenance
+- non-clinical|it & telecom|telecom|voice & data services
+- non-clinical|it & telecom|telecom|wireless services
+- non-clinical|logistics|distribution|warehousing & fulfillment
+- non-clinical|logistics|transportation|courier/parcel
+- non-clinical|logistics|transportation|fleet management
+- non-clinical|logistics|transportation|fleet others
+- non-clinical|logistics|transportation|fleet rental
+- non-clinical|logistics|transportation|fleet vehicle maintenance & repair
+- non-clinical|logistics|transportation|fuel
+- non-clinical|logistics|transportation|ltl
+- non-clinical|logistics|transportation|postage
+- non-clinical|marketing & print|agency|agency fees
+- non-clinical|marketing & print|agency|digital marketing
+- non-clinical|marketing & print|agency|public relations
+- non-clinical|marketing & print|events|events
+- non-clinical|marketing & print|market research services|market research services
+- non-clinical|marketing & print|marketing|marketing other
+- non-clinical|marketing & print|print|signage & displays
+- non-clinical|marketing & print|sponsorships|sponsorships
+- non-clinical|professional services|audit and tax services|audit and tax services
+- non-clinical|professional services|consulting|consulting - general
+- non-clinical|professional services|consulting|hr consulting
+- non-clinical|professional services|consulting|management consulting
+- non-clinical|professional services|legal services|legal services
+- non-clinical|professional services|non-it temp labor|non-it temp labor
+- non-clinical|travel & entertainment|travel|airfare
+- non-clinical|travel & entertainment|travel|auto rental
+- non-clinical|travel & entertainment|travel|business travel other
+- non-clinical|travel & entertainment|travel|hotel room & conference room rental
+- non-clinical|travel & entertainment|travel|meal reimbursement
+- non-clinical|travel & entertainment|travel|mileage reimbursement
+- non-clinical|travel & entertainment|travel|parking/tolls
+- non-clinical|travel & entertainment|travel|private jet
+- non-clinical|travel & entertainment|travel|train / taxi / bus / rideshare / limousine
+  / black cars
+override_rules: []
+note: Each taxonomy path is pipe-separated (L1|L2|L3|...). Select the most specific
+  path you're confident about.
