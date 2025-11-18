@@ -25,17 +25,18 @@ def format_classification_output(L1, L2=None, L3=None, L4=None, L5=None) -> str:
     return "|".join(levels)
 
 
-def run_benchmark(benchmark_folder: str = "default"):
+def process_single_dataset(dataset_dir: Path):
     """
-    Run pipeline on benchmark input.csv and generate output.csv.
+    Process a single dataset folder containing input.csv and expected.txt.
     
     Args:
-        benchmark_folder: Subfolder name (e.g., "default", "failed_rows")
-    """
-    benchmark_dir = Path("benchmarks") / benchmark_folder
+        dataset_dir: Path to dataset folder (e.g., benchmarks/default/fox)
     
-    input_csv = benchmark_dir / "input.csv"
-    expected_txt = benchmark_dir / "expected.txt"
+    Returns:
+        tuple: (results_data list, output_csv path)
+    """
+    input_csv = dataset_dir / "input.csv"
+    expected_txt = dataset_dir / "expected.txt"
     
     if not input_csv.exists():
         raise FileNotFoundError(f"Input CSV not found: {input_csv}")
@@ -52,48 +53,62 @@ def run_benchmark(benchmark_folder: str = "default"):
         while len(expected_list) < len(input_df):
             expected_list.append("")
     
-    results_data = []
+    # Require taxonomy_path column - it must be present
+    if 'taxonomy_path' not in input_df.columns:
+        raise ValueError(
+            f"Missing required 'taxonomy_path' column in {input_csv}. "
+            f"Please add a 'taxonomy_path' column to your input.csv file."
+        )
     
-    for idx, row in input_df.iterrows():
-        row_data = row.to_dict()
-        expected_output = expected_list[idx] if idx < len(expected_list) else ""
+    # Get taxonomy_path from first row (all rows should have same taxonomy)
+    taxonomy_path = input_df['taxonomy_path'].iloc[0]
+    
+    if not taxonomy_path or pd.isna(taxonomy_path):
+        raise ValueError(
+            f"taxonomy_path column is empty or missing in {input_csv}. "
+            f"Please ensure all rows have a valid taxonomy_path value."
+        )
+    
+    taxonomy_path = str(taxonomy_path).strip()
+    
+    if not taxonomy_path:
+        raise ValueError(
+            f"taxonomy_path is empty in {input_csv}. "
+            f"Please provide a valid taxonomy file path."
+        )
+    
+    if not Path(taxonomy_path).exists():
+        raise FileNotFoundError(
+            f"Taxonomy file not found: {taxonomy_path}. "
+            f"Please check that the file exists at the specified path."
+        )
+    
+    # Create pipeline once for the entire dataset (column canonicalization runs once)
+    pipeline = SpendClassificationPipeline(
+        taxonomy_path=taxonomy_path,
+        enable_tracing=False
+    )
+    
+    # Process all rows together - canonicalization happens once, then each row is classified
+    try:
+        result_df, intermediate = pipeline.process_transactions(
+            input_df,
+            taxonomy_path=taxonomy_path,
+            return_intermediate=True
+        )
         
-        taxonomy_path = row.get('taxonomy_path', '')
-        if not taxonomy_path or pd.isna(taxonomy_path):
-            taxonomy_path = "taxonomies/FOX_20230816_161348.yaml"
+        mapping_result = intermediate['mapping_result']
+        supplier_profiles = intermediate['supplier_profiles']
         
-        taxonomy_path = str(taxonomy_path)
-        
-        if not Path(taxonomy_path).exists():
-            print(f"Warning: Taxonomy file not found: {taxonomy_path}, skipping row {idx}")
-            row_data.update({
-                'expected_output': expected_output,
-                'pipeline_output': "",
-                'columns_used': "",
-                'supplier_profile': "",
-                'error': f"Taxonomy file not found: {taxonomy_path}",
-            })
-            results_data.append(row_data)
-            continue
-        
-        try:
-            pipeline = SpendClassificationPipeline(
-                taxonomy_path=taxonomy_path,
-                enable_tracing=False
-            )
+        # Build results for each row
+        results_data = []
+        for idx, original_row in input_df.iterrows():
+            row_data = original_row.to_dict()
+            expected_output = expected_list[idx] if idx < len(expected_list) else ""
             
-            transaction_df = pd.DataFrame([row])
-            result_df, intermediate = pipeline.process_transactions(
-                transaction_df,
-                taxonomy_path=taxonomy_path,
-                return_intermediate=True
-            )
-            
-            mapping_result = intermediate['mapping_result']
-            supplier_profiles = intermediate['supplier_profiles']
-            
-            if len(result_df) > 0:
-                result_row = result_df.iloc[0]
+            # Find corresponding result row
+            if idx < len(result_df):
+                result_row = result_df.iloc[idx]
                 
                 pipeline_output = format_classification_output(
                     result_row.get('L1'),
@@ -110,12 +125,15 @@ def run_benchmark(benchmark_folder: str = "default"):
                 if supplier_name and supplier_name in supplier_profiles:
                     supplier_profile_json = json.dumps(supplier_profiles[supplier_name])
                 
+                # Check for errors in result
+                error_msg = result_row.get('error', '') if 'error' in result_row else ""
+                
                 row_data.update({
                     'expected_output': expected_output,
                     'pipeline_output': pipeline_output,
                     'columns_used': columns_used,
                     'supplier_profile': supplier_profile_json,
-                    'error': "",
+                    'error': error_msg,
                 })
             else:
                 row_data.update({
@@ -123,10 +141,17 @@ def run_benchmark(benchmark_folder: str = "default"):
                     'pipeline_output': "",
                     'columns_used': "",
                     'supplier_profile': "",
-                    'error': "No results returned from pipeline",
+                    'error': "No result returned from pipeline for this row",
                 })
-        
-        except Exception as e:
+            
+            results_data.append(row_data)
+    
+    except Exception as e:
+        # If processing fails, create error entries for all rows
+        results_data = []
+        for idx, original_row in input_df.iterrows():
+            row_data = original_row.to_dict()
+            expected_output = expected_list[idx] if idx < len(expected_list) else ""
             row_data.update({
                 'expected_output': expected_output,
                 'pipeline_output': "",
@@ -134,19 +159,88 @@ def run_benchmark(benchmark_folder: str = "default"):
                 'supplier_profile': "",
                 'error': str(e),
             })
+            results_data.append(row_data)
+    
+    output_csv = dataset_dir / "output.csv"
+    return results_data, output_csv
+
+
+def run_benchmark(benchmark_folder: str = "default"):
+    """
+    Run pipeline on benchmark input.csv and generate output.csv.
+    
+    Supports two modes:
+    - Mode 1: Process parent folder - processes all subfolders (e.g., "default" processes all datasets)
+    - Mode 2: Process specific dataset - processes single folder with input.csv (e.g., "default/fox")
+    
+    Args:
+        benchmark_folder: Subfolder name (e.g., "default", "default/fox", "test_bench")
+    """
+    benchmark_dir = Path("benchmarks") / benchmark_folder
+    
+    # Check if this is Mode 2 (has input.csv directly) or Mode 1 (has subfolders)
+    input_csv = benchmark_dir / "input.csv"
+    
+    if input_csv.exists():
+        # Mode 2: Process single dataset folder
+        print(f"Processing single dataset: benchmarks/{benchmark_folder}")
+        results_data, output_csv = process_single_dataset(benchmark_dir)
         
-        results_data.append(row_data)
+        output_df = pd.DataFrame(results_data)
+        output_df.to_csv(output_csv, index=False)
+        
+        print(f"Benchmark complete!")
+        print(f"Processed {len(results_data)} rows")
+        print(f"Output saved to: {output_csv}")
+        
+        successful = sum(1 for r in results_data if not r.get('error', ''))
+        print(f"Successful: {successful}/{len(results_data)}")
     
-    output_df = pd.DataFrame(results_data)
-    output_csv = benchmark_dir / "output.csv"
-    output_df.to_csv(output_csv, index=False)
-    
-    print(f"Benchmark complete!")
-    print(f"Processed {len(results_data)} rows")
-    print(f"Output saved to: {output_csv}")
-    
-    successful = sum(1 for r in results_data if not r.get('error', ''))
-    print(f"Successful: {successful}/{len(results_data)}")
+    else:
+        # Mode 1: Process all subfolders
+        if not benchmark_dir.exists():
+            raise FileNotFoundError(f"Benchmark directory not found: {benchmark_dir}")
+        
+        # Find all subdirectories
+        subdirs = [d for d in benchmark_dir.iterdir() if d.is_dir() and (d / "input.csv").exists()]
+        
+        if not subdirs:
+            raise FileNotFoundError(
+                f"No dataset folders found in {benchmark_dir}. "
+                f"Expected subfolders with input.csv files."
+            )
+        
+        print(f"Processing {len(subdirs)} datasets in benchmarks/{benchmark_folder}")
+        
+        total_rows = 0
+        total_successful = 0
+        
+        for dataset_dir in sorted(subdirs):
+            dataset_name = dataset_dir.name
+            print(f"\n--- Processing {dataset_name} ---")
+            
+            try:
+                results_data, output_csv = process_single_dataset(dataset_dir)
+                
+                output_df = pd.DataFrame(results_data)
+                output_df.to_csv(output_csv, index=False)
+                
+                successful = sum(1 for r in results_data if not r.get('error', ''))
+                total_rows += len(results_data)
+                total_successful += successful
+                
+                print(f"  Processed {len(results_data)} rows")
+                print(f"  Successful: {successful}/{len(results_data)}")
+                print(f"  Output saved to: {output_csv}")
+            
+            except Exception as e:
+                print(f"  Error processing {dataset_name}: {e}")
+                total_rows += 0
+        
+        print(f"\n=== Overall Summary ===")
+        print(f"Total datasets processed: {len(subdirs)}")
+        print(f"Total rows processed: {total_rows}")
+        print(f"Total successful: {total_successful}/{total_rows}")
 
 
 if __name__ == "__main__":

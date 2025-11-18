@@ -72,57 +72,109 @@ Results are saved to `results/` directory.
 
 ### Running Benchmarks
 
-**Setup**: Create the benchmarks folder structure locally:
+**Benchmark Structure**: Benchmarks are organized by dataset, with each dataset having its own folder containing schema-specific data:
 
-```bash
-mkdir -p benchmarks/{folder_name}
+```
+benchmarks/
+  ├── default/              # Full benchmark datasets
+  │   ├── fox/
+  │   │   ├── input.csv     # FOX-specific schema with taxonomy_path column
+  │   │   ├── expected.txt  # Expected classifications (one per line)
+  │   │   └── output.csv    # Generated results
+  │   ├── innova/
+  │   │   ├── input.csv     # Innova-specific schema
+  │   │   ├── expected.txt
+  │   │   └── output.csv
+  │   ├── lifepoint/
+  │   │   └── ...
+  │   └── sp_global/
+  │       └── ...
+  └── test_bench/          # Quick test datasets (2 rows each)
+      ├── fox/
+      ├── innova/
+      ├── lifepoint/
+      └── sp_global/
 ```
 
-For each benchmark folder, create:
-- `benchmarks/{folder}/input.csv` - Transaction data with `taxonomy_path` column
-- `benchmarks/{folder}/expected.txt` - One expected classification per line (format: "L1|L2|L3|...")
+**Required Files for Each Dataset Folder**:
+- `input.csv` - Transaction data with **required** `taxonomy_path` column
+- `expected.txt` - One expected classification per line (format: "L1|L2|L3|...")
 
-**Sample `input.csv`**:
+**Important**: 
+- Each dataset has its own schema (different column names)
+- The `taxonomy_path` column is **required** in every `input.csv`
+- All rows in a dataset should use the same taxonomy file
 
-| Supplier Name | Vendor Name | GL Description | Line Description | Department | Amount | taxonomy_path |
-|--------------|-------------|----------------|------------------|------------|--------|---------------|
-| Microsoft Corporation | Microsoft | Software Costs | Office 365 Subscription | IT | 5000.00 | taxonomies/FOX_20230816_161348.yaml |
-| Cardinal Health | Cardinal Health | Medical Supplies | Surgical Gloves | Clinical | 2500.00 | taxonomies/FOX_20230816_161348.yaml |
-| AT&T | AT&T | Telecom Services | Phone Line Charges | Operations | 1200.00 | taxonomies/FOX_20230816_161348.yaml |
+**Sample `input.csv`** (FOX dataset example):
+
+| Transaction ID | Amount | Supplier Name | Line Description | Business Unit | ... | taxonomy_path |
+|----------------|--------|---------------|------------------|---------------|-----|---------------|
+| 1000145200 | 3029.45 | effectv | tv media | tvkriv | ... | taxonomies/FOX_20230816_161348.yaml |
+| 10536747911 | 623.67 | dell marketing, l.p. | dell 34 curved monitor | digitl | ... | taxonomies/FOX_20230816_161348.yaml |
 
 **Sample `expected.txt`** (one classification per line, matching row order):
 
-| Row | Expected Classification |
-|-----|------------------------|
-| 1 | `it & telecom\|software\|software licenses fees` |
-| 2 | `clinical\|clinical supplies\|medical-surgical supplies\|medical-surgical supplies` |
-| 3 | `it & telecom\|telecom\|data line charges` |
-
-**Running a benchmark**:
-
-```bash
-# Run benchmark on a specific folder
-PYTHONPATH=. poetry run python benchmarks/run_benchmark.py {folder_name}
+```
+marketing & print|agency|agency fees
+it & telecom|it products & services|it hardware & maintenance
 ```
 
-**Output**: `benchmarks/{folder}/output.csv` contains:
+**Running Benchmarks**:
+
+The benchmark runner supports two modes:
+
+**Mode 1: Process all datasets in a folder** (recommended for full benchmarks):
+```bash
+# Process all datasets in default folder
+PYTHONPATH=. poetry run python benchmarks/run_benchmark.py default
+
+# Process all datasets in test_bench folder
+PYTHONPATH=. poetry run python benchmarks/run_benchmark.py test_bench
+```
+
+**Mode 2: Process a specific dataset**:
+```bash
+# Process only the fox dataset
+PYTHONPATH=. poetry run python benchmarks/run_benchmark.py default/fox
+
+# Process only innova from test_bench
+PYTHONPATH=. poetry run python benchmarks/run_benchmark.py test_bench/innova
+```
+
+**Output**: Each dataset folder gets its own `output.csv` containing:
 
 | Column | Description |
 |--------|-------------|
 | All original columns | All columns from `input.csv` (preserved as-is) |
 | `expected_output` | Expected classification from `expected.txt` (format: "L1\|L2\|L3\|...") |
 | `pipeline_output` | Actual classification produced by the pipeline (format: "L1\|L2\|L3\|...") |
-| `columns_used` | JSON string of column mappings from canonicalization (maps canonical columns to client column names) |
+| `columns_used` | JSON string of column mappings from canonicalization (same for all rows - canonicalization runs once per dataset) |
 | `supplier_profile` | JSON string of supplier profile from research agent (includes official_business_name, industry, products_services, website_url, etc.) |
 | `error` | Error message if processing failed (empty string if successful) |
 
-**Example output**:
 
-| Supplier Name | GL Description | Line Description | Amount | taxonomy_path | expected_output | pipeline_output | columns_used | supplier_profile | error |
-|--------------|----------------|------------------|--------|---------------|-----------------|----------------|--------------|-----------------|-------|
-| Microsoft Corporation | Software Costs | Office 365 Subscription | 5000.00 | taxonomies/FOX_20230816_161348.yaml | `it & telecom\|software\|software licenses fees` | `it & telecom\|software\|software licenses fees` | `{"supplier_name": "Supplier Name", "gl_description": "GL Description"}` | `{"supplier_name": "Microsoft Corporation", "industry": "Technology"}` | |
+**Example Output**:
 
-**Note**: The `benchmarks/` folder is gitignored. Create it locally as needed for your benchmarks. The `input.csv` can have any client-specific column names - they will be automatically canonicalized by the pipeline.
+```
+Processing 4 datasets in benchmarks/test_bench
+
+--- Processing fox ---
+  Processed 2 rows
+  Successful: 2/2
+  Output saved to: benchmarks/test_bench/fox/output.csv
+
+--- Processing innova ---
+  Processed 2 rows
+  Successful: 2/2
+  Output saved to: benchmarks/test_bench/innova/output.csv
+
+=== Overall Summary ===
+Total datasets processed: 4
+Total rows processed: 8
+Total successful: 8/8
+```
+
+**Note**: The `benchmarks/` folder structure is gitignored. Create it locally as needed. Each dataset's `input.csv` can have any client-specific column names - they will be automatically canonicalized by the pipeline.
 
 ### Using the Pipeline
 
