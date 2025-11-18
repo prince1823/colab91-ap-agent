@@ -53,35 +53,16 @@ def process_single_dataset(dataset_dir: Path):
         while len(expected_list) < len(input_df):
             expected_list.append("")
     
-    # Require taxonomy_path column - it must be present
-    if 'taxonomy_path' not in input_df.columns:
-        raise ValueError(
-            f"Missing required 'taxonomy_path' column in {input_csv}. "
-            f"Please add a 'taxonomy_path' column to your input.csv file."
-        )
+    # Look for taxonomy.yaml file in dataset folder
+    taxonomy_yaml = dataset_dir / "taxonomy.yaml"
     
-    # Get taxonomy_path from first row (all rows should have same taxonomy)
-    taxonomy_path = input_df['taxonomy_path'].iloc[0]
-    
-    if not taxonomy_path or pd.isna(taxonomy_path):
-        raise ValueError(
-            f"taxonomy_path column is empty or missing in {input_csv}. "
-            f"Please ensure all rows have a valid taxonomy_path value."
-        )
-    
-    taxonomy_path = str(taxonomy_path).strip()
-    
-    if not taxonomy_path:
-        raise ValueError(
-            f"taxonomy_path is empty in {input_csv}. "
-            f"Please provide a valid taxonomy file path."
-        )
-    
-    if not Path(taxonomy_path).exists():
+    if not taxonomy_yaml.exists():
         raise FileNotFoundError(
-            f"Taxonomy file not found: {taxonomy_path}. "
-            f"Please check that the file exists at the specified path."
+            f"Taxonomy file not found: {taxonomy_yaml}. "
+            f"Please create a taxonomy.yaml file in {dataset_dir}."
         )
+    
+    taxonomy_path = str(taxonomy_yaml)
     
     # Create pipeline once for the entire dataset (column canonicalization runs once)
     pipeline = SpendClassificationPipeline(

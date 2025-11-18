@@ -78,12 +78,14 @@ Results are saved to `results/` directory.
 benchmarks/
   ├── default/              # Full benchmark datasets
   │   ├── fox/
-  │   │   ├── input.csv     # FOX-specific schema with taxonomy_path column
+  │   │   ├── input.csv     # FOX-specific schema
   │   │   ├── expected.txt  # Expected classifications (one per line)
+  │   │   ├── taxonomy.yaml # Taxonomy file for this dataset
   │   │   └── output.csv    # Generated results
   │   ├── innova/
   │   │   ├── input.csv     # Innova-specific schema
   │   │   ├── expected.txt
+  │   │   ├── taxonomy.yaml
   │   │   └── output.csv
   │   ├── lifepoint/
   │   │   └── ...
@@ -97,20 +99,23 @@ benchmarks/
 ```
 
 **Required Files for Each Dataset Folder**:
-- `input.csv` - Transaction data with **required** `taxonomy_path` column
+- `input.csv` - Transaction data (client-specific schema)
 - `expected.txt` - One expected classification per line (format: "L1|L2|L3|...")
+- `taxonomy.yaml` - Taxonomy file for this dataset (copied from `taxonomies/` folder)
 
 **Important**: 
 - Each dataset has its own schema (different column names)
-- The `taxonomy_path` column is **required** in every `input.csv`
-- All rows in a dataset should use the same taxonomy file
+- Each dataset folder must contain a `taxonomy.yaml` file
+- The `taxonomy.yaml` file defines the taxonomy structure for that dataset
 
 **Sample `input.csv`** (FOX dataset example):
 
-| Transaction ID | Amount | Supplier Name | Line Description | Business Unit | ... | taxonomy_path |
-|----------------|--------|---------------|------------------|---------------|-----|---------------|
-| 1000145200 | 3029.45 | effectv | tv media | tvkriv | ... | taxonomies/FOX_20230816_161348.yaml |
-| 10536747911 | 623.67 | dell marketing, l.p. | dell 34 curved monitor | digitl | ... | taxonomies/FOX_20230816_161348.yaml |
+| Transaction ID | Amount | Supplier Name | Line Description | Business Unit | ... |
+|----------------|--------|---------------|------------------|---------------|-----|
+| 1000145200 | 3029.45 | effectv | tv media | tvkriv | ... |
+| 10536747911 | 623.67 | dell marketing, l.p. | dell 34 curved monitor | digitl | ... |
+
+**Note**: No `taxonomy_path` column needed - the `taxonomy.yaml` file in the same folder is used automatically.
 
 **Sample `expected.txt`** (one classification per line, matching row order):
 
@@ -174,7 +179,11 @@ Total rows processed: 8
 Total successful: 8/8
 ```
 
-**Note**: The `benchmarks/` folder structure is gitignored. Create it locally as needed. Each dataset's `input.csv` can have any client-specific column names - they will be automatically canonicalized by the pipeline.
+**Note**: 
+- The `benchmarks/` folder structure is gitignored. Create it locally as needed.
+- Each dataset's `input.csv` can have any client-specific column names - they will be automatically canonicalized by the pipeline.
+- Copy taxonomy files from `taxonomies/` folder to each dataset folder as `taxonomy.yaml`.
+- The `taxonomies/` folder contains the original taxonomy files and is kept for reference.
 
 ### Using the Pipeline
 
