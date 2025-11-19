@@ -1,0 +1,122 @@
+client_name: Innova Care Health
+project_id: Innova_Care_Health_Jun_23
+max_taxonomy_depth: 4
+available_levels:
+- L1
+- L2
+- L3
+- L4
+taxonomy:
+- clinical|clinical equipment|clinical equipment other|clinical equipment other
+- clinical|clinical equipment|diagnostic imaging equipment|diagnostic imaging equipment
+- clinical|clinical services|clinical services other|clinical services other
+- clinical|clinical services|clinical staffing|clinical staffing
+- clinical|clinical services|doctor/physician|doctor/physician/director fee
+- clinical|clinical services|patient care|patient care
+- clinical|clinical supplies|clinical supplies other|clinical supplies other
+- clinical|clinical supplies|medical-surgical supplies|medical-surgical supplies
+- clinical|it - clinical|clinical decision support tools|clinical decision support
+  tools
+- clinical|it - clinical|ehr/emr|ehr/emr
+- clinical|it - clinical|practice management software|practice management software
+- clinical|it - clinical|telehealth|telehealth
+- clinical|laboratory|laboratory services|laboratory services
+- clinical|pharmacy|pharmacy other|pharmacy other
+- clinical|professional services - clinical|healthcare consulting|healthcare consulting
+- clinical|professional services - clinical|revenue cycle management (rcm) services|revenue
+  cycle management (rcm) services
+- non clinical|facilities|construction services|architectural & engineering services
+- non clinical|facilities|construction services|contractors
+- non clinical|facilities|facilities maintenance services|electrical services
+- non clinical|facilities|facilities maintenance services|elevator - escalator services
+- non clinical|facilities|facilities maintenance services|facilities maintenance services
+  - other
+- non clinical|facilities|facilities maintenance services|fire alarm & life safety
+  systems
+- non clinical|facilities|facilities maintenance services|hvac & plumbing services
+- non clinical|facilities|facilities maintenance services|janitorial / cleaning services
+- non clinical|facilities|facilities maintenance services|landscaping & snow removal
+- non clinical|facilities|facilities maintenance services|locksmiths
+- non clinical|facilities|facilities maintenance services|pest control
+- non clinical|facilities|facilities maintenance services|waste management
+- non clinical|facilities|facilities management|cafeteria & catering services
+- non clinical|facilities|facilities management|rent and leases
+- non clinical|facilities|facilities management|security services
+- non clinical|facilities|mro supplies|janitorial/cleaning supplies
+- non clinical|facilities|mro supplies|mro supplies - other
+- non clinical|facilities|mro supplies|uniforms
+- non clinical|facilities|utilities|energy - electricity, heating oil & natural gas
+- non clinical|facilities|utilities|utilities other
+- non clinical|facilities|utilities|water & sewer
+- non clinical|general & administrative|financial services|collection agency
+- non clinical|general & administrative|financial services|electronic payment processing
+- non clinical|general & administrative|financial services|financial services other
+- non clinical|general & administrative|insurance|corporate insurance
+- non clinical|general & administrative|insurance|workmen's compensation insurance
+- non clinical|general & administrative|office supplies & equipment|office supplies
+  & equipment other
+- non clinical|general & administrative|office support|copy machines & copier services
+- non clinical|general & administrative|office support|office furniture
+- non clinical|general & administrative|office support|subscriptions and dues
+- non clinical|general & administrative|services|flowers & gifts
+- non clinical|general & administrative|services|records management, file storage/archive
+- non clinical|general & administrative|services|shredding services
+- non clinical|human resources|employee benefits|employee benefits other
+- non clinical|human resources|employee benefits|retirement and pension plans
+- non clinical|human resources|human resource services|human resource services other
+- non clinical|human resources|insurance / medical benefit|medical, dental and life
+  insurance
+- non clinical|human resources|relocation services|moving/relocation
+- non clinical|human resources|workforce management|employee screening, background
+  checks, drug testing
+- non clinical|human resources|workforce management|recruiting
+- non clinical|human resources|workforce management|training
+- non clinical|it & telecom|it products & services|cloud hosting services
+- non clinical|it & telecom|it products & services|cybersecurity/risk
+- non clinical|it & telecom|it products & services|data center services
+- non clinical|it & telecom|it products & services|it consulting
+- non clinical|it & telecom|it products & services|it hardware & maintenance
+- non clinical|it & telecom|it products & services|it products & services - general
+- non clinical|it & telecom|it products & services|it resellers (vars)
+- non clinical|it & telecom|software|software & maintenance - erp
+- non clinical|it & telecom|software|software & maintenance - general
+- non clinical|it & telecom|telecom|call center & help desk services
+- non clinical|it & telecom|telecom|voice & data services
+- non clinical|it & telecom|telecom|wireless services
+- non clinical|logistics|transportation|fleet
+- non clinical|logistics|transportation|postage
+- non clinical|logistics|transportation|uncategorized transportation
+- non clinical|marketing & print|agency|agency fees
+- non clinical|marketing & print|agency|digital marketing
+- non clinical|marketing & print|events|events
+- non clinical|marketing & print|marketing|marketing other
+- non clinical|marketing & print|media|media other
+- non clinical|marketing & print|media|print media
+- non clinical|marketing & print|print|direct mail and fulfillment
+- non clinical|marketing & print|print|print other
+- non clinical|marketing & print|promotional items|promotional items
+- non clinical|professional services|audit and tax services|audit and tax services
+- non clinical|professional services|consulting|consulting - other
+- non clinical|professional services|consulting|financial consulting
+- non clinical|professional services|consulting|hr consulting
+- non clinical|professional services|consulting|management consulting
+- non clinical|professional services|legal services|legal services
+- non clinical|professional services|non-it temp labor|non-it temp labor
+- non clinical|professional services|professional services|professional services other
+- non clinical|professional services|specialty services|translation services
+- non clinical|travel & entertainment|business travel other|business travel other
+- non clinical|travel & entertainment|hotel room & conference room rental|hotel room
+  & conference room rental
+- non clinical|travel & entertainment|parking/tolls|parking/tolls
+- non-sourceable|non-sourceable|business related|business related other
+- non-sourceable|non-sourceable|business related|charitable contributions & grants
+- non-sourceable|non-sourceable|business related|patient refund
+- non-sourceable|non-sourceable|business related|petty cash
+- non-sourceable|non-sourceable|employee related|employee related other
+- non-sourceable|non-sourceable|intercompany|intercompany
+- non-sourceable|non-sourceable|payroll|payroll
+- non-sourceable|non-sourceable|taxes and regulatory fees|taxes and regulatory fees
+  other
+override_rules: []
+note: Each taxonomy path is pipe-separated (L1|L2|L3|...). Select the most specific
+  path you're confident about.

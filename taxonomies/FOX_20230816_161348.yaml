@@ -1,0 +1,149 @@
+client_name: FOX Corporation
+project_id: FOX_20230816_161348
+max_taxonomy_depth: 3
+available_levels:
+- L1
+- L2
+- L3
+taxonomy:
+- aviation costs|air traffic control|air traffic control
+- aviation costs|aviation commissary|aviation commissary
+- aviation costs|aviation fuel|aviation fuel
+- aviation costs|aviation parts and labor|aviation parts and labor
+- aviation costs|landing fees|landing fees
+- corporate costs|investor relations|investor relations
+- equipment|broadcast equipment|broadcast equipment - other
+- equipment|broadcast equipment|camera accessories
+- equipment|broadcast equipment|cameras
+- equipment|equipment repairs & maintenance|equipment repairs & maintenance
+- equipment|furniture & fixtures|furniture & fixtures
+- equipment|other equipment|audio packages
+- equipment|other equipment|aviation (e.g. helicopter) rental services
+- equipment|other equipment|cabling, cabling supplies & racks
+- equipment|other equipment|camera cart rental
+- equipment|other equipment|camera rental
+- equipment|other equipment|crew rental
+- equipment|other equipment|generators / power
+- equipment|other equipment|lighting
+- equipment|other equipment|machinery & equipment - other
+- equipment|other equipment|truck eng ot
+- equipment|other equipment|truck eng travel
+- equipment|other equipment|truck rental services
+- exempt|business related|charitable contributions & grants
+- exempt|directors fees|directors fees
+- exempt|employee related|employee related other
+- exempt|intercompany|intercompany
+- exempt|taxes and regulatory fees|taxes and regulatory fees other
+- facilities|construction services|architectural & engineering services
+- facilities|facilities maintenance services|electrical services
+- facilities|facilities maintenance services|elevator - escalator services
+- facilities|facilities maintenance services|facilities maintenance services - other
+- facilities|facilities maintenance services|facilities repairs & maintenance
+- facilities|facilities maintenance services|fire alarm & life safety systems
+- facilities|facilities maintenance services|hvac & plumbing services
+- facilities|facilities maintenance services|janitorial / cleaning services
+- facilities|facilities maintenance services|landscaping & snow removal
+- facilities|facilities maintenance services|locksmiths
+- facilities|facilities maintenance services|other building services
+- facilities|facilities maintenance services|pest control
+- facilities|facilities maintenance services|roofing services
+- facilities|facilities maintenance services|uniform, cleaning
+- facilities|facilities management|facilities management other
+- facilities|facilities management|food comps
+- facilities|facilities management|food service supplies
+- facilities|facilities management|offsite & valet parking
+- facilities|facilities management|offsite storage service
+- facilities|facilities management|rent and leases
+- facilities|facilities management|security services
+- facilities|facilities supplies|facilities supplies
+- facilities|utilities|electrical
+- facilities|utilities|gas / oil
+- facilities|utilities|utilities - other
+- general & administrative|financial services|banking charges
+- general & administrative|insurance|other insurance expense
+- general & administrative|office supplies & equipment|office supplies
+- general & administrative|office support|copy machines & copier services
+- general & administrative|office support|dues & subscription
+- general & administrative|services|document management
+- general & administrative|services|flowers & gifts
+- general & administrative|services|other research
+- human resources|employee benefits|employee benefits other
+- human resources|employee benefits|retirement and pension plans
+- human resources|insurance / medical benefit|medical, dental and life insurance
+- human resources|relocation services|moving/relocation
+- human resources|workforce management|employee screening, background checks, drug
+  testing
+- human resources|workforce management|payroll administration services
+- human resources|workforce management|recruiting
+- human resources|workforce management|training and development
+- human resources|workforce management|workforce management other
+- it & telecom|it products & services|audio - visual equipment
+- it & telecom|it products & services|cloud hosting services
+- it & telecom|it products & services|data analytics
+- it & telecom|it products & services|fiber
+- it & telecom|it products & services|it consulting
+- it & telecom|it products & services|it hardware & maintenance
+- it & telecom|it products & services|satellite charges & uplink
+- it & telecom|software|research/data software
+- it & telecom|software|software development
+- it & telecom|software|software licenses fees
+- it & telecom|software|video software tools
+- it & telecom|telecom|cable / satellite / internet
+- it & telecom|telecom|customer service
+- it & telecom|telecom|data line charges
+- it & telecom|telecom|telecom equipment
+- logistics|transportation|courier/parcel
+- logistics|transportation|postage & freight
+- logistics|transportation|vehicle maintenance
+- marketing & print|agency|activations
+- marketing & print|agency|agency fees
+- marketing & print|agency|art & design
+- marketing & print|agency|creative agency
+- marketing & print|agency|digital marketing
+- marketing & print|agency|promo shoots
+- marketing & print|agency|public relations
+- marketing & print|distribution renewal marketing|distribution renewal marketing
+- marketing & print|events|award entry fees and support
+- marketing & print|marketing research|marketing research
+- marketing & print|marketing|marketing other
+- marketing & print|media|local media
+- marketing & print|media|outdoor media
+- marketing & print|media|print media
+- marketing & print|media|radio media
+- marketing & print|print|print & printing supplies
+- marketing & print|promotional material / fulfillment|promotional material / fulfillment
+- marketing & print|sales materials|affiliate kits/guides
+- network data management|bandwidth/streaming|bandwidth/streaming
+- production cost|editorial|editorial
+- production cost|eng package|eng package
+- production cost|footage|footage
+- production cost|golf cart rental|golf cart rental
+- production cost|makeup|makeup
+- production cost|news wire services|news wire services
+- production cost|other production expense|other production expense
+- production cost|service contracts|service contracts
+- production cost|statistical services|statistical services
+- production cost|support services|support services
+- production cost|tape stock|tape stock
+- production cost|transcripts|transcripts
+- professional services|accounting fees|accounting fees
+- professional services|consulting|consulting - other
+- professional services|consulting|financial consulting
+- professional services|consulting|management consulting
+- professional services|legal services|legal services
+- professional services|non-it temp labor|non-it temp labor
+- professional services|professional services|professional services other
+- professional services|specialty services|audience analytics
+- transmission|av transmission expense|av transmission expense
+- transmission|infrastructure transmission|infrastructure transmission
+- travel & entertainment|airfare|airfare
+- travel & entertainment|car rental|car rental
+- travel & entertainment|fuel reimbursement|fuel reimbursement
+- travel & entertainment|ground transportation|ground transportation
+- travel & entertainment|hotels & suites|hotels & suites
+- travel & entertainment|meals|meals
+- travel & entertainment|other travel & entertainment|other travel & entertainment
+- travel & entertainment|tolls|tolls
+override_rules: []
+note: Each taxonomy path is pipe-separated (L1|L2|L3|...). Select the most specific
+  path you're confident about.

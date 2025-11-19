@@ -1,0 +1,59 @@
+/mlruns/
+/mlflow.db
+/reports/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+.venv
+
+# DSPy
+.dspy_cache/
+
+# Environment
+.env
+.env.local
+ops/.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data files (temporary)
+*.csv
+*.xlsx
+!tests/sample_data.csv
+
+# Benchmarks (create locally as needed)
+# Keep the runner script tracked, but ignore data folders
+benchmarks/*/
+!benchmarks/*.py
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Distribution
+dist/
+build/
+*.egg-info/
+
+/cube_data/
+/extraction_outputs/
+/results/
+/260925ARC03379/
+/ops/
