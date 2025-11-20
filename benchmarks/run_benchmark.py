@@ -36,6 +36,9 @@ def process_single_dataset(dataset_dir: Path):
     Returns:
         tuple: (results_data list, output_csv path)
     """
+    dataset_name = dataset_dir.name
+    print(f"Started processing {dataset_name}...")
+    
     input_csv = dataset_dir / "input.csv"
     expected_txt = dataset_dir / "expected.txt"
     
@@ -133,6 +136,7 @@ def process_single_dataset(dataset_dir: Path):
     
     except Exception as e:
         # If processing fails, create error entries for all rows
+        print(f"Error encountered while processing {dataset_name}: {e}")
         results_data = []
         for idx, original_row in input_df.iterrows():
             row_data = original_row.to_dict()
@@ -147,6 +151,7 @@ def process_single_dataset(dataset_dir: Path):
             results_data.append(row_data)
     
     output_csv = dataset_dir / "output.csv"
+    print(f"Finished processing {dataset_name}")
     return results_data, output_csv
 
 
