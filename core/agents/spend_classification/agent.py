@@ -4,6 +4,7 @@ Classifies spend transactions using supplier intelligence, transaction data, and
 """
 
 import json
+import threading
 from pathlib import Path
 from typing import Dict, Optional, Union
 
@@ -56,6 +57,8 @@ class SpendClassifier:
         
         # Cache for taxonomy data to avoid reloading for each transaction
         self._taxonomy_cache: Dict[str, Dict] = {}
+        # Lock for thread-safe cache access
+        self._cache_lock = threading.Lock()
 
     def load_taxonomy(self, taxonomy_path: Union[str, Path]) -> Dict:
         """Load taxonomy from YAML file"""
@@ -86,11 +89,12 @@ class SpendClassifier:
                 "A taxonomy YAML path must be provided to classify a transaction."
             )
 
-        # Use cached taxonomy if available, otherwise load and cache it
+        # Use cached taxonomy if available, otherwise load and cache it (thread-safe)
         taxonomy_source_str = str(taxonomy_source)
-        if taxonomy_source_str not in self._taxonomy_cache:
-            self._taxonomy_cache[taxonomy_source_str] = self.load_taxonomy(taxonomy_source)
-        taxonomy_data = self._taxonomy_cache[taxonomy_source_str]
+        with self._cache_lock:
+            if taxonomy_source_str not in self._taxonomy_cache:
+                self._taxonomy_cache[taxonomy_source_str] = self.load_taxonomy(taxonomy_source)
+            taxonomy_data = self._taxonomy_cache[taxonomy_source_str]
 
         # Prepare inputs
         supplier_json = json.dumps(supplier_profile, indent=2)
