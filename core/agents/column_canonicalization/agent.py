@@ -119,14 +119,32 @@ class ColumnCanonicalizationAgent:
             if canonical_name not in canonical_names:
                 validation_errors.append(f"Canonical column '{canonical_name}' not found")
         
-        # Check for critical columns
+        # Check for critical and high relevance columns
         mapped_canonical = set(mappings.keys())
-        has_supplier = 'supplier_name' in mapped_canonical
-        has_gl_desc = 'gl_description' in mapped_canonical
-        has_line_desc = 'line_description' in mapped_canonical
+        critical_fields = ['supplier_name', 'gl_description', 'line_description']
+        high_fields = ['gl_code', 'department']
         
-        if not (has_supplier or has_gl_desc or has_line_desc):
-            validation_warnings.append("Missing critical classification fields (supplier_name, gl_description, or line_description)")
+        # Check which critical fields are missing
+        missing_critical = [f for f in critical_fields if f not in mapped_canonical]
+        missing_high = [f for f in high_fields if f not in mapped_canonical]
+        
+        # Warn if critical fields are missing (they might not exist in client data)
+        if missing_critical:
+            validation_warnings.append(
+                f"Missing critical fields (if available in client data, should be mapped): {', '.join(missing_critical)}"
+            )
+        
+        # Warn if high relevance fields are missing
+        if missing_high:
+            validation_warnings.append(
+                f"Missing high relevance fields (if available in client data, should be mapped): {', '.join(missing_high)}"
+            )
+        
+        # Ensure at least one critical field is mapped
+        if not any(f in mapped_canonical for f in critical_fields):
+            validation_warnings.append(
+                "CRITICAL: At least one critical field (supplier_name, gl_description, or line_description) must be mapped for classification to work"
+            )
         
         validation_passed = len(validation_errors) == 0
         

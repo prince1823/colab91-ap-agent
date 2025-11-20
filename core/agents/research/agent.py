@@ -87,13 +87,18 @@ class ResearchAgent:
                 self.exa_client = None
                 self.use_exa = False
     
-    def _exa_search(self, supplier_name: str) -> Optional[Dict[str, Any]]:
+    def _exa_search(self, supplier_name: str, supplier_address: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Exa search that returns structured JSON."""
         if not self.exa_client:
             return None
         
-        fields = "supplier_name, official_business_name, description, website_url, industry, products_services, parent_company"
-        prompt = f"Get the following information about {supplier_name} company in json format - {fields}"
+        # Build search query with address if available
+        search_query = supplier_name
+        if supplier_address:
+            search_query = f"{supplier_name} {supplier_address}"
+        
+        fields = "supplier_name, official_business_name, description, website_url, industry, products_services, parent_company, supplier_address"
+        prompt = f"Get the following information about {search_query} company in json format - {fields}. Use supplier address if available for more accurate search results."
         
         try:
             completion = self.exa_client.chat.completions.create(
@@ -116,12 +121,13 @@ class ResearchAgent:
         except Exception:
             return None
     
-    def research_supplier(self, supplier_name: str, search_results: str = None) -> SupplierProfile:
+    def research_supplier(self, supplier_name: str, supplier_address: Optional[str] = None, search_results: str = None) -> SupplierProfile:
         """
         Research supplier and extract structured information
         
         Args:
             supplier_name: Name of supplier to research
+            supplier_address: Optional supplier address/location for more accurate search
             search_results: Optional pre-fetched search results (only used if not using Exa)
             
         Returns:
@@ -129,10 +135,17 @@ class ResearchAgent:
         """
         # If using Exa, get structured data directly from Exa
         if self.use_exa:
-            exa_data = self._exa_search(supplier_name)
+            exa_data = self._exa_search(supplier_name, supplier_address)
             
             if exa_data:
                 # Exa returns structured JSON, use it directly
+                # Extract supplier_address from search results if found, otherwise use provided address
+                found_address = exa_data.get("supplier_address")
+                if found_address and found_address.lower() not in ["unknown", "none", ""]:
+                    final_address = found_address
+                else:
+                    final_address = supplier_address
+                
                 return SupplierProfile(
                     supplier_name=exa_data.get("supplier_name", supplier_name),
                     official_business_name=exa_data.get("official_business_name", "Unknown"),
@@ -142,6 +155,7 @@ class ResearchAgent:
                     products_services=exa_data.get("products_services", "Unknown"),
                     parent_company=exa_data.get("parent_company") if exa_data.get("parent_company") and exa_data.get("parent_company").lower() not in ["unknown", "none", ""] else None,
                     confidence="high",  # Exa provides structured data, so confidence is high
+                    supplier_address=final_address,
                 )
             else:
                 # Exa failed, return minimal profile
@@ -154,6 +168,7 @@ class ResearchAgent:
                     products_services="Unknown",
                     parent_company=None,
                     confidence="low",
+                    supplier_address=supplier_address,
                 )
         
         # If not using Exa, use LLM to extract from search results
@@ -166,6 +181,16 @@ class ResearchAgent:
             search_results=search_results
         )
         
+        # Extract supplier_address from LLM result if available
+        supplier_addr = None
+        if hasattr(result, 'supplier_address'):
+            addr_value = getattr(result, 'supplier_address', None)
+            if addr_value and str(addr_value).strip().lower() not in ["unknown", "none", ""]:
+                supplier_addr = str(addr_value).strip()
+        # Fallback to provided address if LLM didn't find one
+        if not supplier_addr:
+            supplier_addr = supplier_address
+        
         # Create supplier profile from LLM result
         return SupplierProfile(
             supplier_name=supplier_name,
@@ -176,8 +201,9 @@ class ResearchAgent:
             products_services=result.products_services,
             parent_company=result.parent_company if result.parent_company.lower() not in ["none", "unknown"] else None,
             confidence=result.confidence.lower().strip(),
+            supplier_address=supplier_addr,
         )
     
-    def __call__(self, supplier_name: str, search_results: str = None) -> SupplierProfile:
+    def __call__(self, supplier_name: str, supplier_address: Optional[str] = None, search_results: str = None) -> SupplierProfile:
         """Research supplier and return structured profile."""
-        return self.research_supplier(supplier_name, search_results)
+        return self.research_supplier(supplier_name, supplier_address, search_results)
