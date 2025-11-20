@@ -5,82 +5,32 @@ import dspy
 
 class ColumnCanonicalizationSignature(dspy.Signature):
     """
-    You are an expert spend analyst. Your goal is to map client data columns to canonical 
-    columns for spend categorization and analysis.
+    Map client data columns to canonical columns for spend classification.
     
-    CRITICAL: Map ALL available fields that match canonical columns. Missing fields will break 
-    downstream classification (exempt detection, tax handling, supplier research, etc.).
+    CRITICAL: Map ALL available fields matching canonical columns. Missing fields break downstream classification.
     
     MAPPING STRATEGY:
-    1. PRIORITY: Map ALL Critical and High relevance fields if they exist in client data
-    2. SECONDARY: Map Medium relevance fields if available (helpful for classification)
-    3. OPTIONAL: Map Low relevance fields (for analytics/reporting)
-    4. SKIP: Only skip system/metadata fields (mapping rules, flags, audit fields, derived indicators)
+    1. Map ALL Critical/High fields if available
+    2. Map Medium/Low fields if available  
+    3. Skip ONLY system/metadata fields (mapping rules, flags, audit fields, derived indicators)
     
-    THINK LIKE A SPEND ANALYST:
-    - Which columns help identify WHAT was purchased? (supplier, GL descriptions, line items, PO descriptions)
-    - Which columns help CATEGORIZE the spend? (GL codes, departments, descriptions)
-    - Which columns help with SUPPLIER RESEARCH? (supplier address, supplier name)
-    - Which columns help with EXEMPT DETECTION? (line descriptions, GL descriptions)
-    - Which columns help with TAX HANDLING? (line descriptions that mention tax)
-    - Which columns are just metadata/system fields? (mapping rules, flags, system IDs, audit fields)
-    
-    RELEVANCE LEVELS (in canonical columns):
-    - Critical: Essential for spend categorization (supplier, GL/line descriptions) - MUST MAP if available
-    - High: Very useful for classification (GL codes, departments) - SHOULD MAP if available
-    - Medium: Helpful context (cost centers, dates, PO numbers, supplier address) - MAP if available
-    - Low: For analytics/reporting only (amounts, currency, transaction IDs) - MAP if available
+    RELEVANCE LEVELS:
+    - Critical: supplier, GL/line descriptions - MUST MAP
+    - High: GL codes, departments - SHOULD MAP
+    - Medium: cost centers, dates, PO numbers, supplier address - MAP if available
+    - Low: amounts, currency, transaction IDs - MAP if available
     
     MAPPING RULES:
-    ✓ DO map: ALL fields that match canonical columns (especially Critical/High/Medium relevance)
-    ✓ DO map: Supplier names, GL descriptions/codes, line descriptions, departments, PO numbers, supplier addresses
-    ✗ DON'T map: "Mapping Rule", "Flag", system IDs, audit fields, derived indicators, internal flags
+    ✓ Map: ALL matching fields (especially Critical/High/Medium)
+    ✗ Skip: "Mapping Rule", "Flag", system IDs, audit fields, derived indicators
     
-    IMPORTANT: 
-    - If a client column matches a canonical column (by name or alias), MAP IT
-    - Don't skip fields just because they seem "less important" - downstream agents need them
-    - Better to over-map than under-map (unused fields won't hurt, missing fields will break classification)
+    IMPORTANT: If a client column matches canonical (by name/alias), MAP IT. Better to over-map than under-map.
     
     EXAMPLES:
-
-    Example A - Complete Mapping (GOOD):
-      Client columns: ["Vendor Name", "GL Description", "Line Item", "PO Number", "Amount"]
-      Action: Map ALL matching fields
-      Result: {
-        "supplier_name": "Vendor Name",
-        "gl_description": "GL Description", 
-        "line_description": "Line Item",
-        "po_number": "PO Number",
-        "amount": "Amount"
-      }
-
-    Example B - Skip System Fields (GOOD):
-      Client columns: ["Vendor Name", "Mapping Rule", "Flag", "Line Item"]
-      Action: Map relevant fields, skip system fields
-      Result: {
-        "supplier_name": "Vendor Name",
-        "line_description": "Line Item"
-      }
-      Unmapped: ["Mapping Rule", "Flag"] (correctly skipped)
-
-    Example C - Under-Mapping (BAD):
-      Client columns: ["Vendor Name", "GL Description", "Line Item", "PO Number"]
-      Action: Only mapped supplier_name
-      Result: {
-        "supplier_name": "Vendor Name"
-      }
-      Problem: Missing gl_description, line_description, po_number - these are needed for classification!
-
-    Example D - Map Supplier Address (GOOD):
-      Client columns: ["Vendor Name", "Vendor Address", "Line Item"]
-      Action: Map all relevant fields including address
-      Result: {
-        "supplier_name": "Vendor Name",
-        "supplier_address": "Vendor Address",  # Needed for accurate web search
-        "line_description": "Line Item"
-      }
-    
-    The goal is COMPLETE MAPPING of all relevant fields for robust spend classification.
+    A) ["Vendor Name", "GL Description", "Line Item", "PO Number"] → Map all
+    B) ["Vendor Name", "Mapping Rule", "Flag"] → Map supplier_name, skip system fields
+    C) ["Vendor Name", "GL Description", "Line Item"] → Map all (under-mapping breaks classification)
+    D) ["Vendor Name", "Vendor Address", "Line Item"] → Map all including supplier_address
     """
     
     client_schema: str = dspy.InputField(

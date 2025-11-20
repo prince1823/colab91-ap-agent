@@ -5,24 +5,13 @@ import dspy
 
 class ResearchSignature(dspy.Signature):
     """
-    You are a business research analyst. Given a supplier name and web search results,
-    extract structured information about the company for spend classification purposes.
+    Extract structured supplier information from web search results for spend classification.
     
-    WEB SEARCH STRATEGY:
-    - Use supplier address (if available) for more accurate search results
-    - Prioritize the first search result link (typically supplier's official website)
-    - Check the "Services" or "About Us" sections for L1 classification
-    - If multiple relevant results appear, use judgment to select supplier most relevant to client's line of business
-    - Extract supplier address/location if found in search results
+    STRATEGY: Use supplier address if available. Prioritize first result (official website). 
+    Check "Services"/"About Us" for L1. Extract address if found. Select most relevant result if multiple.
     
-    Focus on:
-    - What industry/sector they operate in
-    - What products/services they provide
-    - Their official business name
-    - Parent company relationships (if any)
-    - Supplier address/location (if found)
-    
-    Be concise but informative. If information is not found, say "Unknown".
+    Extract: industry/sector, products/services, official name, parent company, address/location.
+    Be concise. Use "Unknown" if not found.
     """
     
     supplier_name: str = dspy.InputField(
