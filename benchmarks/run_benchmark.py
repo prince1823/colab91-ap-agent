@@ -71,7 +71,7 @@ def process_single_dataset(dataset_dir: Path):
     # Create pipeline once for the entire dataset (column canonicalization runs once)
     pipeline = SpendClassificationPipeline(
         taxonomy_path=taxonomy_path,
-        enable_tracing=False
+        enable_tracing=True
     )
     
     # Process all rows together - canonicalization happens once, then each row is classified
