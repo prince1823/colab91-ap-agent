@@ -3,6 +3,7 @@
 Orchestrates column canonicalization, supplier research, and spend classification agents.
 """
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -38,8 +39,44 @@ class SpendClassificationPipeline:
         # Cache for supplier profiles to avoid duplicate research calls
         self._supplier_cache: Dict[str, Dict] = {}
 
+    def _classify_single_row(
+        self, idx: int, row_dict: Dict, supplier_profile: Dict, taxonomy: str
+    ) -> Tuple[int, Optional[ClassificationResult], Optional[Dict]]:
+        """
+        Helper method to classify a single row (used for parallel processing)
+        
+        Args:
+            idx: Row index
+            row_dict: Row data as dictionary
+            supplier_profile: Supplier profile dictionary
+            taxonomy: Taxonomy path
+            
+        Returns:
+            Tuple of (row_index, classification_result, error_dict)
+        """
+        supplier_name = row_dict.get('supplier_name')
+        if not supplier_name or pd.isna(supplier_name):
+            return idx, None, {'row': idx, 'error': 'Missing supplier_name'}
+        
+        if not supplier_profile or 'error' in supplier_profile:
+            return idx, None, {
+                'row': idx,
+                'supplier': supplier_name,
+                'error': supplier_profile.get('error', 'Supplier profile not found') if supplier_profile else 'Supplier not researched'
+            }
+        
+        try:
+            result = self.classification_agent.classify_transaction(
+                supplier_profile=supplier_profile,
+                transaction_data=row_dict,
+                taxonomy_yaml=taxonomy,
+            )
+            return idx, result, None
+        except Exception as e:
+            return idx, None, {'row': idx, 'supplier': supplier_name, 'error': str(e)}
+
     def process_transactions(
-        self, df: pd.DataFrame, taxonomy_path: Optional[str] = None, return_intermediate: bool = False
+        self, df: pd.DataFrame, taxonomy_path: Optional[str] = None, return_intermediate: bool = False, max_workers: int = 5
     ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, Dict]]:
         """
         Process transactions through the full pipeline
@@ -48,6 +85,7 @@ class SpendClassificationPipeline:
             df: DataFrame with raw transaction data (client-specific column names)
             taxonomy_path: Optional override for taxonomy path
             return_intermediate: If True, returns tuple with intermediate results
+            max_workers: Maximum number of parallel workers for classification (default: 5)
 
         Returns:
             DataFrame with original + canonical + classification columns
@@ -82,40 +120,52 @@ class SpendClassificationPipeline:
                         'error': str(e),
                     }
 
-        # Step 3: Classify transactions
-        classification_results = []
+        # Step 3: Classify transactions (parallel processing)
+        # Initialize results list with None for all rows
+        classification_results = [None] * len(canonical_df)
         errors = []
 
-        for idx, row in canonical_df.iterrows():
-            supplier_name = row.get('supplier_name')
+        # Prepare tasks for parallel processing
+        # Use enumerate to track position in DataFrame (for list indexing)
+        tasks = []
+        for pos, row_tuple in enumerate(canonical_df.itertuples(index=True)):
+            df_idx = row_tuple.Index  # Original DataFrame index
+            # Convert named tuple to dict, excluding Index
+            row_dict = {col: getattr(row_tuple, col) for col in canonical_df.columns}
+            
+            supplier_name = row_dict.get('supplier_name')
             if not supplier_name or pd.isna(supplier_name):
-                errors.append({'row': idx, 'error': 'Missing supplier_name'})
-                classification_results.append(None)
+                errors.append({'row': df_idx, 'error': 'Missing supplier_name'})
                 continue
 
             supplier_profile = self._supplier_cache.get(supplier_name)
             if not supplier_profile or 'error' in supplier_profile:
                 errors.append({
-                    'row': idx,
+                    'row': df_idx,
                     'supplier': supplier_name,
                     'error': supplier_profile.get('error', 'Supplier profile not found') if supplier_profile else 'Supplier not researched'
                 })
-                classification_results.append(None)
                 continue
 
-            # Prepare transaction data dict
-            transaction_data = row.to_dict()
+            # Add task for parallel processing (pos is position in DataFrame, df_idx is original index)
+            tasks.append((pos, df_idx, row_dict, supplier_profile, taxonomy))
 
-            try:
-                result = self.classification_agent.classify_transaction(
-                    supplier_profile=supplier_profile,
-                    transaction_data=transaction_data,
-                    taxonomy_yaml=taxonomy,
-                )
-                classification_results.append(result)
-            except Exception as e:
-                errors.append({'row': idx, 'supplier': supplier_name, 'error': str(e)})
-                classification_results.append(None)
+        # Process tasks in parallel
+        if tasks:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all tasks
+                future_to_pos = {
+                    executor.submit(self._classify_single_row, df_idx, row_dict, supplier_profile, taxonomy): pos
+                    for pos, df_idx, row_dict, supplier_profile, taxonomy in tasks
+                }
+                
+                # Collect results as they complete
+                for future in as_completed(future_to_pos):
+                    pos = future_to_pos[future]
+                    df_idx, result, error = future.result()
+                    classification_results[pos] = result
+                    if error:
+                        errors.append(error)
 
         # Step 4: Add classification columns to DataFrame
         result_df = canonical_df.copy()

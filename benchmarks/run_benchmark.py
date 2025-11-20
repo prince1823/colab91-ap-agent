@@ -1,6 +1,7 @@
 """Run benchmark pipeline on input.csv and generate output.csv with all results."""
 
 import json
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -72,11 +73,14 @@ def process_single_dataset(dataset_dir: Path):
     
     # Process all rows together - canonicalization happens once, then each row is classified
     try:
+        start_time = time.time()
         result_df, intermediate = pipeline.process_transactions(
             input_df,
             taxonomy_path=taxonomy_path,
             return_intermediate=True
         )
+        elapsed_time = time.time() - start_time
+        print(f"Processing time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
         
         mapping_result = intermediate['mapping_result']
         supplier_profiles = intermediate['supplier_profiles']

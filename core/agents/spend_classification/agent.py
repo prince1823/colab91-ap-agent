@@ -53,6 +53,9 @@ class SpendClassifier:
 
         # Create DSPy predictor
         self.classifier = dspy.ChainOfThought(SpendClassificationSignature)
+        
+        # Cache for taxonomy data to avoid reloading for each transaction
+        self._taxonomy_cache: Dict[str, Dict] = {}
 
     def load_taxonomy(self, taxonomy_path: Union[str, Path]) -> Dict:
         """Load taxonomy from YAML file"""
@@ -83,7 +86,11 @@ class SpendClassifier:
                 "A taxonomy YAML path must be provided to classify a transaction."
             )
 
-        taxonomy_data = self.load_taxonomy(taxonomy_source)
+        # Use cached taxonomy if available, otherwise load and cache it
+        taxonomy_source_str = str(taxonomy_source)
+        if taxonomy_source_str not in self._taxonomy_cache:
+            self._taxonomy_cache[taxonomy_source_str] = self.load_taxonomy(taxonomy_source)
+        taxonomy_data = self._taxonomy_cache[taxonomy_source_str]
 
         # Prepare inputs
         supplier_json = json.dumps(supplier_profile, indent=2)
