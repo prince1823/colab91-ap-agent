@@ -116,11 +116,15 @@ def process_single_dataset(dataset_dir: Path):
                 # Check for errors in result
                 error_msg = result_row.get('error', '') if 'error' in result_row else ""
                 
+                # Extract reasoning from result
+                reasoning = result_row.get('reasoning', '') if 'reasoning' in result_row else ""
+                
                 row_data.update({
                     'expected_output': expected_output,
                     'pipeline_output': pipeline_output,
                     'columns_used': columns_used,
                     'supplier_profile': supplier_profile_json,
+                    'reasoning': reasoning,
                     'error': error_msg,
                 })
             else:
@@ -129,6 +133,7 @@ def process_single_dataset(dataset_dir: Path):
                     'pipeline_output': "",
                     'columns_used': "",
                     'supplier_profile': "",
+                    'reasoning': "",
                     'error': "No result returned from pipeline for this row",
                 })
             
@@ -146,6 +151,7 @@ def process_single_dataset(dataset_dir: Path):
                 'pipeline_output': "",
                 'columns_used': "",
                 'supplier_profile': "",
+                'reasoning': "",
                 'error': str(e),
             })
             results_data.append(row_data)
