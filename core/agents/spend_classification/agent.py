@@ -109,6 +109,10 @@ class SpendClassifier:
         taxonomy_list = taxonomy_data['taxonomy']
         taxonomy_json = json.dumps(taxonomy_list, indent=2)
 
+        # Extract available levels from taxonomy
+        available_levels = taxonomy_data.get('available_levels', ['L1', 'L2', 'L3', 'L4', 'L5'])
+        available_levels_str = ', '.join(available_levels)
+
         override_rules = (
             "\n".join(taxonomy_data.get('override_rules', []))
             if taxonomy_data.get('override_rules')
@@ -120,6 +124,7 @@ class SpendClassifier:
             supplier_profile=supplier_json,
             transaction_data=transaction_json,
             taxonomy_structure=taxonomy_json,
+            available_levels=available_levels_str,
             override_rules=override_rules,
         )
 

@@ -113,9 +113,15 @@ class ColumnCanonicalizationAgent:
         validation_warnings = []
         
         # Check that mapped client columns exist
-        for canonical_name, client_col in mappings.items():
+        for canonical_name, client_col in list(mappings.items()):  # Use list() to avoid modification during iteration
             if client_col not in client_columns:
-                validation_errors.append(f"Mapped client column '{client_col}' does not exist")
+                # Make currency optional - don't fail if missing (currency is not used in classification)
+                if canonical_name == 'currency':
+                    validation_warnings.append(f"Optional column 'currency' mapped but not found: '{client_col}'")
+                    # Remove from mappings to avoid error
+                    mappings.pop(canonical_name, None)
+                else:
+                    validation_errors.append(f"Mapped client column '{client_col}' does not exist")
             if canonical_name not in canonical_names:
                 validation_errors.append(f"Canonical column '{canonical_name}' not found")
         

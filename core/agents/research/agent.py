@@ -137,7 +137,13 @@ class ResearchAgent:
         if self.use_exa:
             exa_data = self._exa_search(supplier_name, supplier_address)
             
-            if exa_data:
+            # Handle case where Exa returns a list instead of dict
+            if isinstance(exa_data, list) and len(exa_data) > 0:
+                exa_data = exa_data[0]  # Use first element
+            elif not isinstance(exa_data, dict):
+                exa_data = None  # Invalid format, fall back to LLM
+            
+            if exa_data and isinstance(exa_data, dict):
                 # Exa returns structured JSON, use it directly
                 # Extract supplier_address from search results if found, otherwise use provided address
                 found_address = exa_data.get("supplier_address")
@@ -157,19 +163,7 @@ class ResearchAgent:
                     confidence="high",  # Exa provides structured data, so confidence is high
                     supplier_address=final_address,
                 )
-            else:
-                # Exa failed, return minimal profile
-                return SupplierProfile(
-                    supplier_name=supplier_name,
-                    official_business_name="Unknown",
-                    description="No information found",
-                    website_url=None,
-                    industry="Unknown",
-                    products_services="Unknown",
-                    parent_company=None,
-                    confidence="low",
-                    supplier_address=supplier_address,
-                )
+            
         
         # If not using Exa, use LLM to extract from search results
         if search_results is None:
