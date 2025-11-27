@@ -87,6 +87,14 @@ class AppConfig(BaseSettings):
     # Data paths
     data_dir: Path = Field(default=Path("data"), alias="DATA_DIR")
     results_dir: Path = Field(default=Path("results"), alias="RESULTS_DIR")
+    
+    # Database configuration
+    database_path: Path = Field(
+        default=Path("data/classifications.db"), alias="DATABASE_PATH"
+    )
+    enable_classification_cache: bool = Field(
+        default=False, alias="ENABLE_CLASSIFICATION_CACHE"
+    )
 
     # Per-Agent LLM Selection
     column_canonicalization_llm: str = Field(
@@ -125,6 +133,8 @@ class AppConfig(BaseSettings):
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.results_dir.mkdir(parents=True, exist_ok=True)
         self.dspy.cache_dir.mkdir(parents=True, exist_ok=True)
+        # Ensure database directory exists
+        self.database_path.parent.mkdir(parents=True, exist_ok=True)
 
 
 # Global configuration instance

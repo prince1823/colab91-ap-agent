@@ -1,7 +1,8 @@
 """Spend classification agent."""
 
-from core.agents.spend_classification.agent import SpendClassifier
+# Backward compatibility - re-export from new locations
+from core.agents.spend_classification.l1 import L1Classifier
+from core.agents.spend_classification.full import SpendClassifier, ClassificationValidator
 from core.agents.spend_classification.model import ClassificationResult
-from core.agents.spend_classification.validation import ClassificationValidator
 
-__all__ = ["SpendClassifier", "ClassificationResult", "ClassificationValidator"]
+__all__ = ["SpendClassifier", "ClassificationResult", "ClassificationValidator", "L1Classifier"]
