@@ -184,13 +184,39 @@ class ColumnCanonicalizationAgent:
             )
         
         # Create reverse mapping (client_col -> canonical_col)
-        reverse_mapping = {v: k for k, v in mapping_result.mappings.items()}
+        # Handle case where multiple canonical columns map to same client column
+        reverse_mapping = {}
+        for canonical_col, client_col in mapping_result.mappings.items():
+            if client_col in reverse_mapping:
+                # Multiple canonical columns map to same client column
+                # Use the first one, or create a list (we'll handle this by duplicating the column)
+                logger.warning(f"Multiple canonical columns ({reverse_mapping[client_col]}, {canonical_col}) map to same client column {client_col}. Using first mapping.")
+            else:
+                reverse_mapping[client_col] = canonical_col
         
-        # Rename columns
+        # Rename columns (only unique mappings)
         df_canonical = df.rename(columns=reverse_mapping)
+        
+        # Handle duplicate mappings: if multiple canonical columns map to same client column,
+        # duplicate the column for each canonical column
+        for canonical_col, client_col in mapping_result.mappings.items():
+            if canonical_col not in df_canonical.columns:
+                # This canonical column maps to a client column that was already renamed
+                # Find which canonical column was used for the rename
+                if client_col in df.columns:
+                    # Client column still exists (wasn't renamed), duplicate it
+                    df_canonical[canonical_col] = df[client_col]
+                else:
+                    # Client column was renamed, find the canonical column it was renamed to
+                    for other_canonical, other_client in mapping_result.mappings.items():
+                        if other_client == client_col and other_canonical in df_canonical.columns:
+                            df_canonical[canonical_col] = df_canonical[other_canonical]
+                            break
         
         # Select only the mapped columns
         canonical_columns = list(mapping_result.mappings.keys())
-        df_canonical = df_canonical[canonical_columns]
+        # Only select columns that actually exist
+        existing_columns = [col for col in canonical_columns if col in df_canonical.columns]
+        df_canonical = df_canonical[existing_columns]
         
         return df_canonical

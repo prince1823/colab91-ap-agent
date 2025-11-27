@@ -82,10 +82,32 @@ class SpendClassificationPipeline:
                 if cached_result:
                     return pos, cached_result, None
             
-            # Step 2: Run L1 classifier (transaction data only)
+            # Step 2: Check if transaction data is sparse - if so, do early research for L1
+            supplier_profile_for_l1 = None
+            is_sparse = self._is_transaction_data_sparse(row_dict)
+            if is_sparse:
+                # Do early research when data is sparse so L1 can use supplier profile
+                cache_key = str(supplier_name).lower().strip()
+                if cache_key in self._supplier_cache:
+                    supplier_profile_for_l1 = self._supplier_cache[cache_key]
+                    logger.debug(f"Using cached research data for early L1 classification: {supplier_name}")
+                else:
+                    # Research supplier early for sparse data
+                    supplier_address = row_dict.get('supplier_address')
+                    supplier_profile_obj = self.research_agent.research_supplier(
+                        str(supplier_name),
+                        supplier_address=supplier_address if supplier_address and pd.notna(supplier_address) else None
+                    )
+                    supplier_profile_for_l1 = supplier_profile_obj.to_dict()
+                    # Cache the research result for reuse
+                    self._supplier_cache[cache_key] = supplier_profile_for_l1
+                    logger.debug(f"Early research completed for sparse data: {supplier_name}")
+            
+            # Step 3: Run L1 classifier (with supplier profile if data is sparse)
             l1_result = self.l1_classifier.classify_l1(
                 transaction_data=row_dict,
                 taxonomy_yaml=taxonomy,
+                supplier_profile=supplier_profile_for_l1,
             )
             l1_category = l1_result.get('L1') if l1_result else None
             
@@ -100,15 +122,15 @@ class SpendClassificationPipeline:
                     'l1_result': l1_result,
                 }
             
-            # Step 3: Check Supplier + L1 cache - current run only
+            # Step 4: Check Supplier + L1 cache - current run only
             if self.db_manager:
                 cached_result = self.db_manager.get_by_supplier_and_l1(supplier_name, l1_category, run_id=run_id)
                 if cached_result:
                     return pos, cached_result, None
             
-            # Step 4: Assess if research is needed
-            supplier_profile = None
-            if self.research_decision_agent.should_research(row_dict, l1_result):
+            # Step 5: Assess if additional research is needed (if not already done)
+            supplier_profile = supplier_profile_for_l1  # Reuse if we already did early research
+            if not supplier_profile and self.research_decision_agent.should_research(row_dict, l1_result):
                 # Check if we already have research data for this supplier (cache)
                 cache_key = str(supplier_name).lower().strip()
                 if cache_key in self._supplier_cache:
@@ -139,12 +161,33 @@ class SpendClassificationPipeline:
                 }
             
             # Step 6: Run full classifier (L1 + transaction + supplier + filtered taxonomy)
-            result = self.classification_agent.classify_transaction(
-                l1_category=l1_category,
-                supplier_profile=supplier_profile,
-                transaction_data=row_dict,
-                taxonomy_yaml=taxonomy,
-            )
+            try:
+                result = self.classification_agent.classify_transaction(
+                    l1_category=l1_category,
+                    supplier_profile=supplier_profile,
+                    transaction_data=row_dict,
+                    taxonomy_yaml=taxonomy,
+                )
+                
+                # Validate result
+                if not result or not hasattr(result, 'L1') or not result.L1:
+                    error_msg = f"Full classifier returned None or invalid result for supplier: {supplier_name}"
+                    logger.warning(error_msg)
+                    return pos, None, {
+                        'row_index': df_idx,
+                        'supplier_name': supplier_name,
+                        'error': error_msg,
+                        'l1_category': l1_category,
+                    }
+            except Exception as e:
+                error_msg = f"Error in full classification for supplier {supplier_name}: {e}"
+                logger.error(error_msg, exc_info=True)
+                return pos, None, {
+                    'row_index': df_idx,
+                    'supplier_name': supplier_name,
+                    'error': error_msg,
+                    'l1_category': l1_category,
+                }
             
             # Step 7: Store result in database at all cache levels
             if self.db_manager:
@@ -243,18 +286,18 @@ class SpendClassificationPipeline:
         # Step 4: Add classification columns to DataFrame
         result_df = canonical_df.copy()
 
-        # Add classification columns
-        result_df['L1'] = [r.L1 if r else None for r in classification_results]
-        result_df['L2'] = [r.L2 if r else None for r in classification_results]
-        result_df['L3'] = [r.L3 if r else None for r in classification_results]
-        result_df['L4'] = [r.L4 if r else None for r in classification_results]
-        result_df['L5'] = [r.L5 if r else None for r in classification_results]
+        # Add classification columns (handle None results gracefully)
+        result_df['L1'] = [r.L1 if r and hasattr(r, 'L1') and r.L1 else None for r in classification_results]
+        result_df['L2'] = [r.L2 if r and hasattr(r, 'L2') and r.L2 else None for r in classification_results]
+        result_df['L3'] = [r.L3 if r and hasattr(r, 'L3') and r.L3 else None for r in classification_results]
+        result_df['L4'] = [r.L4 if r and hasattr(r, 'L4') and r.L4 else None for r in classification_results]
+        result_df['L5'] = [r.L5 if r and hasattr(r, 'L5') and r.L5 else None for r in classification_results]
 
         # Add other metadata
         result_df['override_rule_applied'] = [
-            r.override_rule_applied if r else None for r in classification_results
+            r.override_rule_applied if r and hasattr(r, 'override_rule_applied') and r.override_rule_applied else None for r in classification_results
         ]
-        result_df['reasoning'] = [r.reasoning if r else None for r in classification_results]
+        result_df['reasoning'] = [r.reasoning if r and hasattr(r, 'reasoning') and r.reasoning else None for r in classification_results]
 
         # Store errors as attribute for inspection
         result_df.attrs['classification_errors'] = errors
@@ -268,3 +311,44 @@ class SpendClassificationPipeline:
             return result_df, intermediate
         
         return result_df
+    
+    def _is_transaction_data_sparse(self, row_dict: Dict) -> bool:
+        """
+        Check if transaction data is sparse (generic GL + accounting references).
+        
+        Args:
+            row_dict: Transaction data dictionary
+            
+        Returns:
+            True if transaction data is sparse, False otherwise
+        """
+        from core.utils.transaction_utils import is_valid_value
+        
+        line_desc = row_dict.get('line_description')
+        gl_desc = row_dict.get('gl_description')
+        
+        # Check if line description is missing or is an accounting reference
+        has_meaningful_line_desc = False
+        if line_desc and is_valid_value(line_desc):
+            line_desc_str = str(line_desc).strip().lower()
+            # Check if it's likely an accounting reference (starts with common patterns)
+            accounting_patterns = ['operational journal:', 'supplier invoice:', 'journal entry', 'journal:']
+            if not any(line_desc_str.startswith(pattern) for pattern in accounting_patterns):
+                # Not an accounting reference, might be meaningful
+                if len(line_desc_str) > 3:
+                    has_meaningful_line_desc = True
+        
+        # Check if GL is generic payment term
+        has_meaningful_gl = False
+        if gl_desc and is_valid_value(gl_desc):
+            gl_desc_str = str(gl_desc).strip().lower()
+            generic_gl_terms = [
+                'accounts payable', 'accounts receivable', 'ap', 'ar',
+                'accrued invoices', 'accrued', 'payable', 't&e payable',
+                'general ledger', 'gl', 'journal entry', 'adjustment'
+            ]
+            if not any(term in gl_desc_str for term in generic_gl_terms):
+                has_meaningful_gl = True
+        
+        # Data is sparse if both line description and GL are not meaningful
+        return not (has_meaningful_line_desc or has_meaningful_gl)
