@@ -113,20 +113,44 @@ class ColumnCanonicalizationAgent:
         validation_warnings = []
         
         # Check that mapped client columns exist
-        for canonical_name, client_col in mappings.items():
+        for canonical_name, client_col in list(mappings.items()):  # Use list() to avoid modification during iteration
             if client_col not in client_columns:
-                validation_errors.append(f"Mapped client column '{client_col}' does not exist")
+                # Make currency optional - don't fail if missing (currency is not used in classification)
+                if canonical_name == 'currency':
+                    validation_warnings.append(f"Optional column 'currency' mapped but not found: '{client_col}'")
+                    # Remove from mappings to avoid error
+                    mappings.pop(canonical_name, None)
+                else:
+                    validation_errors.append(f"Mapped client column '{client_col}' does not exist")
             if canonical_name not in canonical_names:
                 validation_errors.append(f"Canonical column '{canonical_name}' not found")
         
-        # Check for critical columns
+        # Check for critical and high relevance columns
         mapped_canonical = set(mappings.keys())
-        has_supplier = 'supplier_name' in mapped_canonical
-        has_gl_desc = 'gl_description' in mapped_canonical
-        has_line_desc = 'line_description' in mapped_canonical
+        critical_fields = ['supplier_name', 'gl_description', 'line_description']
+        high_fields = ['gl_code', 'department']
         
-        if not (has_supplier or has_gl_desc or has_line_desc):
-            validation_warnings.append("Missing critical classification fields (supplier_name, gl_description, or line_description)")
+        # Check which critical fields are missing
+        missing_critical = [f for f in critical_fields if f not in mapped_canonical]
+        missing_high = [f for f in high_fields if f not in mapped_canonical]
+        
+        # Warn if critical fields are missing (they might not exist in client data)
+        if missing_critical:
+            validation_warnings.append(
+                f"Missing critical fields (if available in client data, should be mapped): {', '.join(missing_critical)}"
+            )
+        
+        # Warn if high relevance fields are missing
+        if missing_high:
+            validation_warnings.append(
+                f"Missing high relevance fields (if available in client data, should be mapped): {', '.join(missing_high)}"
+            )
+        
+        # Ensure at least one critical field is mapped
+        if not any(f in mapped_canonical for f in critical_fields):
+            validation_warnings.append(
+                "CRITICAL: At least one critical field (supplier_name, gl_description, or line_description) must be mapped for classification to work"
+            )
         
         validation_passed = len(validation_errors) == 0
         

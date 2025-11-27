@@ -16,6 +16,7 @@ class SupplierProfile:
     products_services: str
     parent_company: Optional[str]
     confidence: str  # high, medium, low
+    supplier_address: Optional[str] = None  # Optional supplier address/location
     
     def to_dict(self) -> dict:
         """Convert to dictionary"""
@@ -28,5 +29,6 @@ class SupplierProfile:
             "products_services": self.products_services,
             "parent_company": self.parent_company,
             "confidence": self.confidence,
+            "supplier_address": self.supplier_address,
         }
 

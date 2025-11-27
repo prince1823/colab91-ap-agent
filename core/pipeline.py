@@ -111,7 +111,20 @@ class SpendClassificationPipeline:
         for supplier_name in unique_suppliers:
             if supplier_name not in self._supplier_cache:
                 try:
-                    profile = self.research_agent.research_supplier(str(supplier_name))
+                    # Get supplier address if available (optional field)
+                    supplier_address = None
+                    if 'supplier_address' in canonical_df.columns:
+                        # Get address from first row with this supplier (addresses should be consistent per supplier)
+                        supplier_rows = canonical_df[canonical_df['supplier_name'] == supplier_name]
+                        if not supplier_rows.empty:
+                            address_value = supplier_rows['supplier_address'].dropna().iloc[0] if 'supplier_address' in supplier_rows.columns else None
+                            if address_value and pd.notna(address_value) and str(address_value).strip():
+                                supplier_address = str(address_value).strip()
+                    
+                    profile = self.research_agent.research_supplier(
+                        str(supplier_name), 
+                        supplier_address=supplier_address
+                    )
                     self._supplier_cache[supplier_name] = profile.to_dict()
                 except Exception as e:
                     # Store error info for debugging
