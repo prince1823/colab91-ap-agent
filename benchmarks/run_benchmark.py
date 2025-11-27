@@ -1,6 +1,7 @@
 """Run benchmark pipeline on input.csv and generate output.csv with all results."""
 
 import json
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -35,6 +36,9 @@ def process_single_dataset(dataset_dir: Path):
     Returns:
         tuple: (results_data list, output_csv path)
     """
+    dataset_name = dataset_dir.name
+    print(f"Started processing {dataset_name}...")
+    
     input_csv = dataset_dir / "input.csv"
     expected_txt = dataset_dir / "expected.txt"
     
@@ -67,16 +71,19 @@ def process_single_dataset(dataset_dir: Path):
     # Create pipeline once for the entire dataset (column canonicalization runs once)
     pipeline = SpendClassificationPipeline(
         taxonomy_path=taxonomy_path,
-        enable_tracing=False
+        enable_tracing=True
     )
     
     # Process all rows together - canonicalization happens once, then each row is classified
     try:
+        start_time = time.time()
         result_df, intermediate = pipeline.process_transactions(
             input_df,
             taxonomy_path=taxonomy_path,
             return_intermediate=True
         )
+        elapsed_time = time.time() - start_time
+        print(f"Processing time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
         
         mapping_result = intermediate['mapping_result']
         supplier_profiles = intermediate['supplier_profiles']
@@ -109,11 +116,15 @@ def process_single_dataset(dataset_dir: Path):
                 # Check for errors in result
                 error_msg = result_row.get('error', '') if 'error' in result_row else ""
                 
+                # Extract reasoning from result
+                reasoning = result_row.get('reasoning', '') if 'reasoning' in result_row else ""
+                
                 row_data.update({
                     'expected_output': expected_output,
                     'pipeline_output': pipeline_output,
                     'columns_used': columns_used,
                     'supplier_profile': supplier_profile_json,
+                    'reasoning': reasoning,
                     'error': error_msg,
                 })
             else:
@@ -122,6 +133,7 @@ def process_single_dataset(dataset_dir: Path):
                     'pipeline_output': "",
                     'columns_used': "",
                     'supplier_profile': "",
+                    'reasoning': "",
                     'error': "No result returned from pipeline for this row",
                 })
             
@@ -129,6 +141,7 @@ def process_single_dataset(dataset_dir: Path):
     
     except Exception as e:
         # If processing fails, create error entries for all rows
+        print(f"Error encountered while processing {dataset_name}: {e}")
         results_data = []
         for idx, original_row in input_df.iterrows():
             row_data = original_row.to_dict()
@@ -138,11 +151,13 @@ def process_single_dataset(dataset_dir: Path):
                 'pipeline_output': "",
                 'columns_used': "",
                 'supplier_profile': "",
+                'reasoning': "",
                 'error': str(e),
             })
             results_data.append(row_data)
     
     output_csv = dataset_dir / "output.csv"
+    print(f"Finished processing {dataset_name}")
     return results_data, output_csv
 
 

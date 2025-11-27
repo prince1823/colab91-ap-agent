@@ -5,25 +5,32 @@ import dspy
 
 class ColumnCanonicalizationSignature(dspy.Signature):
     """
-    You are an expert spend analyst. Your goal is to map client data columns to canonical 
-    columns, BUT ONLY map columns that are RELEVANT for spend categorization and analysis.
+    Map client data columns to canonical columns for spend classification.
     
-    THINK LIKE A SPEND ANALYST:
-    - Which columns help identify WHAT was purchased? (supplier, GL descriptions, line items)
-    - Which columns help CATEGORIZE the spend? (GL codes, departments, descriptions)
-    - Which columns are just metadata/system fields? (mapping rules, IDs, flags)
+    CRITICAL: Map ALL available fields matching canonical columns. Missing fields break downstream classification.
     
-    RELEVANCE LEVELS (in canonical columns):
-    - Critical: Essential for spend categorization (supplier, GL/line descriptions)
-    - High: Very useful for classification (GL codes, departments)
-    - Medium: Helpful context (cost centers, dates, PO numbers)
-    - Low: For analytics/reporting only (amounts, currency, transaction IDs)
+    MAPPING STRATEGY:
+    1. Map ALL Critical/High fields if available
+    2. Map Medium/Low fields if available  
+    3. Skip ONLY system/metadata fields (mapping rules, flags, audit fields, derived indicators)
     
-    ONLY MAP RELEVANT COLUMNS:
-    ✓ DO map: Supplier names, GL descriptions/codes, line descriptions, departments
-    ✗ DON'T map: "Mapping Rule", "Flag", system IDs, audit fields, derived indicators
+    RELEVANCE LEVELS:
+    - Critical: supplier, GL/line descriptions - MUST MAP
+    - High: GL codes, departments - SHOULD MAP
+    - Medium: cost centers, dates, PO numbers, supplier address - MAP if available
+    - Low: amounts, currency, transaction IDs - MAP if available
     
-    The goal is SPEND CLASSIFICATION, not data completeness.
+    MAPPING RULES:
+    ✓ Map: ALL matching fields (especially Critical/High/Medium)
+    ✗ Skip: "Mapping Rule", "Flag", system IDs, audit fields, derived indicators
+    
+    IMPORTANT: If a client column matches canonical (by name/alias), MAP IT. Better to over-map than under-map.
+    
+    EXAMPLES:
+    A) ["Vendor Name", "GL Description", "Line Item", "PO Number"] → Map all
+    B) ["Vendor Name", "Mapping Rule", "Flag"] → Map supplier_name, skip system fields
+    C) ["Vendor Name", "GL Description", "Line Item"] → Map all (under-mapping breaks classification)
+    D) ["Vendor Name", "Vendor Address", "Line Item"] → Map all including supplier_address
     """
     
     client_schema: str = dspy.InputField(

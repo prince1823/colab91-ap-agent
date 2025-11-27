@@ -5,81 +5,73 @@ import dspy
 
 class SpendClassificationSignature(dspy.Signature):
     """
-    You are an expert spend categorization analyst. Classify the transaction into 
-    the appropriate category using the client's taxonomy structure.
+    Classify transactions into taxonomy categories using pipe-separated paths (e.g., "clinical|clinical supplies|medical-surgical supplies").
 
-    TAXONOMY FORMAT:
+    STEP 0A: EXEMPT/EXCEPTIONS DETECTION (check FIRST)
+    
+    Spend on intercompany transfers, sponsorship, wages, government-related items, etc. should be 
+    bucketed under an Exempt category (L1). The L1 category name varies by taxonomy - it could be 
+    "exempt", "exceptions", or another name.
+    
+    FIRST: Scan the taxonomy_structure to identify what L1 category serves as the exempt/exceptions 
+    bucket. Look for L1 categories that contain paths like:
+    - "intercompany", "inter-company", "subsidiary", "related party", "internal transfer"
+    - "employee", "wages", "salary", "payroll", "compensation", "benefits"
+    - "charitable", "donation", "sponsorship", "grant", "contribution"
+    - "taxes", "regulatory", "license", "permit", "government fee"
+    - "directors", "board member", "board compensation"
+    
+    Once you identify the exempt/exceptions L1 category name from the taxonomy, use THAT category name.
+    
+    Detect exempt-type transactions:
+    - Intercompany: "intercompany", "inter-company", "subsidiary", "related party", "internal transfer"
+    - Employee: "wages", "salary", "payroll", "employee", "compensation", "benefits", "payroll processing"
+    - Charitable: "donation", "charitable", "sponsorship", "grant", "contribution", "philanthropy"
+    - Government: "tax", "regulatory", "license", "permit", "government fee", "compliance fee"
+    - Directors: "director", "board member", "board compensation"
+    
+    Use semantic understanding: "Payroll processing services" → exempt/exceptions (employee). 
+    "Sales tax on office supplies" → NOT exempt/exceptions (see tax handling). STOP if exempt/exceptions detected.
 
-    The taxonomy_structure contains a list of pipe-separated category paths. Each path shows
-    the full hierarchy from L1 to the deepest level.
-
-    Examples:
-    - "clinical|clinical supplies|medical-surgical supplies|medical-surgical supplies"
-      → L1="clinical", L2="clinical supplies", L3="medical-surgical supplies", L4="medical-surgical supplies"
-
-    - "it & telecom|software|software licenses fees"
-      → L1="it & telecom", L2="software", L3="software licenses fees"
+    STEP 0B: TAX HANDLING
+    Taxes on purchases → classify with underlying purchase category.
+    Identify tax charges: sales tax, VAT, GST, use tax, excise tax, service tax.
+    If tax charge: find what it's ON → classify to same category as purchase.
+    If unclear what tax is on → classify to the exempt/exceptions L1 category (from STEP 0A) > taxes path.
+    Example: If exempt L1 is "exceptions", use "exceptions|government / taxes|government / taxes"
+    Example: If exempt L1 is "exempt", use "exempt|taxes and regulatory fees|taxes and regulatory fees other"
+    Only proceed if NOT exempt/exceptions and NOT tax charge.
 
     CLASSIFICATION PROCEDURE:
+    1. Review: supplier (industry/products), line description, GL description, department
+    2. Find best matching taxonomy path (prefer deeper paths)
+    3. Split path into levels based on available_levels (ONLY return levels specified in available_levels)
+    4. For levels beyond available_levels, do NOT return them (not "None", just omit)
 
-    STEP 1: Review the transaction
-    - Examine supplier (industry, products/services) - THIS IS MOST IMPORTANT
-    - Examine line description (what was purchased)
-    - Examine GL description, department
+    STRATEGY - Bottom-Up: Identify deepest confident level first (ideally L3+). L1/L2 auto-determined.
+    Example: "laptops" → L3="IT Hardware" → L1="IT", L2="IT Hardware" auto-determined.
 
-    STEP 2: Find best matching taxonomy path
-    - Scan the taxonomy_structure list
-    - Find the path that best matches the transaction
-    - Consider specificity: prefer deeper paths if confident
+    PRIORITY:
+    1. Rich transaction data (PO/Invoice/GL) - PRIMARY when available. Use FIRST if clear (e.g., "laptops", "cloud hosting").
+    2. Supplier industry/products - PRIMARY when transaction data insufficient
+    3. Line description → Department → GL description (ignore generic like "accounts payable")
 
-    STEP 3: Split the path into levels
-    - If you select "clinical|clinical supplies|medical-surgical supplies|medical-surgical supplies"
-    - Output: L1="clinical", L2="clinical supplies", L3="medical-surgical supplies", L4="medical-surgical supplies"
-    - If you're only confident to L2, output L1 and L2 only, leave L3/L4/L5 as "None"
-
-    IMPORTANT OUTPUT FORMAT RULE:
-    - If the chosen taxonomy path contains N levels, you must produce N level outputs (L1..LN).
-    - When you are uncertain beyond a certain depth, still emit the deeper level fields and set their values to "None".
-
-    CLASSIFICATION PRIORITY (most to least important):
-    1. Supplier industry and products/services (what they actually sell)
-    2. Line description (what was purchased)
-    3. Department context
-    4. GL description (BUT: ignore generic accounts like "accounts payable")
+    FALLBACK: If only L1 info available → Return only levels in available_levels.
+    Example: If available_levels is "L1, L2, L3" → Return L1=[Category]|L2=[Category] Other|L3=None
+    Example: If available_levels is "L1, L2, L3, L4" → Return L1=[Category]|L2=[Category] Other|L3=None|L4=None
 
     EXAMPLES:
+    A) Supplier: "Cardinal Health", Line: "Surgical gloves" → "clinical|clinical supplies|medical-surgical supplies|medical-surgical supplies"
+    B) Supplier: "Microsoft", Line: "Software subscription" → "it & telecom|software|software licenses fees"
+    C) Line: "Inter-company transfer" → Find exempt L1 from taxonomy (e.g., "exempt" or "exceptions") → "exempt|intercompany|intercompany" OR "exceptions|intercompany|intercompany"
+    D) Line: "Payroll processing fees" → Find exempt L1 from taxonomy → "exempt|employee related|employee related other" OR "exceptions|employee expense claim|employee expense claim"
+    E) Line: "Sales tax on office supplies" → "non-clinical|general & administrative|office supplies|office supplies" (tax with purchase)
+    F) Line: "State sales tax" (unclear) → Find exempt L1 from taxonomy → "exempt|taxes and regulatory fees|taxes and regulatory fees other" OR "exceptions|government / taxes|government / taxes"
+    G) Line: "Purchase of 5 Dell laptops" → "it & telecom|it hardware|it hardware" (direct L3)
+    H) Supplier: "Local Services LLC", Line: "", available_levels="L1, L2, L3, L4" → "non-clinical|general & administrative|None|None"
+    I) Supplier: "Generic Services Inc", Line: "", available_levels="L1, L2, L3, L4" → "non-clinical|professional services|professional services other|None" (fallback - return only available levels)
 
-    Example A - Medical Supplies:
-      Supplier: "Cardinal Health" (Healthcare, medical supplies distributor)
-      Line: "Surgical gloves"
-      Matching path: "clinical|clinical supplies|medical-surgical supplies|medical-surgical supplies"
-      Output:
-        L1 = "clinical"
-        L2 = "clinical supplies"
-        L3 = "medical-surgical supplies"
-        L4 = "medical-surgical supplies"
-
-    Example B - Software (Less Specific):
-      Supplier: "Microsoft" (Technology, software)
-      Line: "Software subscription"
-      GL: "Software costs"
-      Matching path: "it & telecom|software|software licenses fees"
-      Output:
-        L1 = "it & telecom"
-        L2 = "software"
-        L3 = "software licenses fees"
-
-    Example C - Uncertain Detail:
-      Supplier: "Local Services LLC" (Unknown industry)
-      Line: "" (blank)
-      GL: "Accounts payable" (generic)
-      Best guess: "non-clinical|general & administrative|services|..."
-      Output:
-        L1 = "non-clinical"
-        L2 = "general & administrative"
-        L3 = "None" [stopped here due to uncertainty]
-
-    If override rules exist, apply them FIRST before using general classification logic.
+    Apply override rules FIRST if they exist.
     """
 
     supplier_profile: str = dspy.InputField(
@@ -90,6 +82,9 @@ class SpendClassificationSignature(dspy.Signature):
     )
     taxonomy_structure: str = dspy.InputField(
         desc="Client's taxonomy as a list of pipe-separated paths (e.g., ['L1|L2|L3', 'L1|L2|L3|L4']). Select the best matching path and split it into individual levels."
+    )
+    available_levels: str = dspy.InputField(
+        desc="Available taxonomy levels (e.g., 'L1, L2, L3'). Only return levels specified here."
     )
     override_rules: str = dspy.InputField(
         desc="Override rules that take precedence (if any)"

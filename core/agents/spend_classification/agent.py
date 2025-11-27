@@ -4,10 +4,12 @@ Classifies spend transactions using supplier intelligence, transaction data, and
 """
 
 import json
+import threading
 from pathlib import Path
 from typing import Dict, Optional, Union
 
 import dspy
+import pandas as pd
 import yaml
 
 from core.config import get_config
@@ -53,12 +55,95 @@ class SpendClassifier:
 
         # Create DSPy predictor
         self.classifier = dspy.ChainOfThought(SpendClassificationSignature)
+        
+        # Cache for taxonomy data to avoid reloading for each transaction
+        self._taxonomy_cache: Dict[str, Dict] = {}
+        # Lock for thread-safe cache access
+        self._cache_lock = threading.Lock()
 
     def load_taxonomy(self, taxonomy_path: Union[str, Path]) -> Dict:
         """Load taxonomy from YAML file"""
         path_str = str(taxonomy_path)
         with open(path_str, 'r') as f:
             return yaml.safe_load(f)
+
+    def _format_transaction_data(self, transaction_data: Dict) -> str:
+        """Format transaction data to emphasize relevant fields"""
+        def _is_valid_value(value) -> bool:
+            """Check if value is valid and not empty"""
+            if value is None:
+                return False
+            try:
+                if pd.isna(value):
+                    return False
+            except (TypeError, ValueError):
+                # Not a pandas type, check if it's a valid string
+                pass
+            return bool(str(value).strip())
+        
+        # Priority fields for classification
+        priority_fields = {
+            'line_description': 'Line Description',
+            'gl_description': 'GL Description', 
+            'department': 'Department',
+            'po_number': 'PO Number',
+            'invoice_number': 'Invoice Number',
+        }
+        
+        # Secondary fields
+        secondary_fields = {
+            'cost_center': 'Cost Center',
+            'amount': 'Amount',
+            'currency': 'Currency',
+        }
+        
+        formatted_parts = []
+        
+        # Add priority fields first
+        formatted_parts.append("PRIMARY TRANSACTION DATA:")
+        for key, label in priority_fields.items():
+            value = transaction_data.get(key)
+            if _is_valid_value(value):
+                formatted_parts.append(f"  {label}: {value}")
+        
+        # Add secondary fields if available
+        has_secondary = any(
+            _is_valid_value(transaction_data.get(k))
+            for k in secondary_fields.keys()
+        )
+        if has_secondary:
+            formatted_parts.append("\nADDITIONAL CONTEXT:")
+            for key, label in secondary_fields.items():
+                value = transaction_data.get(key)
+                if _is_valid_value(value):
+                    formatted_parts.append(f"  {label}: {value}")
+        
+        return "\n".join(formatted_parts) if formatted_parts else "No transaction details available"
+
+    def _assess_transaction_data_quality(self, transaction_data: Dict) -> str:
+        """Assess quality of transaction data"""
+        def _has_valid_field(field_name: str) -> bool:
+            """Check if field exists and has valid content"""
+            value = transaction_data.get(field_name)
+            if value is None:
+                return False
+            try:
+                if pd.isna(value):
+                    return False
+            except (TypeError, ValueError):
+                pass
+            return bool(str(value).strip())
+        
+        has_line_desc = _has_valid_field('line_description')
+        has_gl_desc = _has_valid_field('gl_description')
+        has_po = _has_valid_field('po_number')
+        
+        if has_line_desc or has_gl_desc or has_po:
+            return "HIGH - Rich transaction data available. Prioritize transaction details over supplier industry."
+        elif has_line_desc or has_gl_desc:
+            return "MEDIUM - Some transaction data available. Use transaction details primarily, supplement with supplier context."
+        else:
+            return "LOW - Limited transaction data. Rely more on supplier industry/products, but still consider transaction context."
 
     def classify_transaction(
         self,
@@ -83,7 +168,12 @@ class SpendClassifier:
                 "A taxonomy YAML path must be provided to classify a transaction."
             )
 
-        taxonomy_data = self.load_taxonomy(taxonomy_source)
+        # Use cached taxonomy if available, otherwise load and cache it (thread-safe)
+        taxonomy_source_str = str(taxonomy_source)
+        with self._cache_lock:
+            if taxonomy_source_str not in self._taxonomy_cache:
+                self._taxonomy_cache[taxonomy_source_str] = self.load_taxonomy(taxonomy_source)
+            taxonomy_data = self._taxonomy_cache[taxonomy_source_str]
 
         # Prepare inputs
         supplier_json = json.dumps(supplier_profile, indent=2)
@@ -91,12 +181,20 @@ class SpendClassifier:
         # Handle string transaction format
         if isinstance(transaction_data, str):
             transaction_json = transaction_data  # Use as-is
+            data_quality = "UNKNOWN - Transaction data provided as string"
         else:
-            transaction_json = json.dumps(transaction_data, indent=2)
+            # Format transaction data with quality assessment
+            data_quality = self._assess_transaction_data_quality(transaction_data)
+            formatted_transaction = self._format_transaction_data(transaction_data)
+            transaction_json = f"{data_quality}\n\n{formatted_transaction}"
 
         # Format taxonomy as list of pipe-separated strings for LLM
         taxonomy_list = taxonomy_data['taxonomy']
         taxonomy_json = json.dumps(taxonomy_list, indent=2)
+
+        # Extract available levels from taxonomy
+        available_levels = taxonomy_data.get('available_levels', ['L1', 'L2', 'L3', 'L4', 'L5'])
+        available_levels_str = ', '.join(available_levels)
 
         override_rules = (
             "\n".join(taxonomy_data.get('override_rules', []))
@@ -109,6 +207,7 @@ class SpendClassifier:
             supplier_profile=supplier_json,
             transaction_data=transaction_json,
             taxonomy_structure=taxonomy_json,
+            available_levels=available_levels_str,
             override_rules=override_rules,
         )
 

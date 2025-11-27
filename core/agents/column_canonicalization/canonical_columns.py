@@ -102,6 +102,14 @@ CANONICAL_COLUMNS = [
         common_aliases=["PO Number", "PO #", "Purchase Order", "PO", "Purchase Order Number"],
         display_order=8,
     ),
+    CanonicalColumn(
+        canonical_name="supplier_address",
+        data_type="string",
+        relevance_for_spend_analysis="Medium",
+        description="Supplier address/location - MEDIUM relevance for accurate web search and supplier identification",
+        common_aliases=["Vendor Address", "Supplier Address", "Address", "Location", "Vendor Location", "Supplier Location"],
+        display_order=13,
+    ),
     
     # LOW relevance for analytics/reporting (not classification)
     CanonicalColumn(
