@@ -4,7 +4,9 @@ Classifies spend transactions using supplier intelligence, transaction data, and
 """
 
 import json
+import logging
 import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, Optional, Union
 
@@ -15,9 +17,13 @@ import yaml
 from core.config import get_config
 from core.llms.llm import get_llm_for_agent
 from core.utils.mlflow import setup_mlflow_tracing
-from core.agents.spend_classification.signature import SpendClassificationSignature
+from core.agents.spend_classification.full.signature import FullClassificationSignature
 from core.agents.spend_classification.model import ClassificationResult
-from core.agents.spend_classification.validation import ClassificationValidator
+from core.agents.spend_classification.full.validation import ClassificationValidator
+from core.utils.taxonomy_filter import filter_taxonomy_by_l1, augment_taxonomy_with_other
+from core.utils.transaction_utils import format_transaction_data, is_valid_value
+
+logger = logging.getLogger(__name__)
 
 
 class SpendClassifier:
@@ -54,10 +60,12 @@ class SpendClassifier:
         )
 
         # Create DSPy predictor
-        self.classifier = dspy.ChainOfThought(SpendClassificationSignature)
+        self.classifier = dspy.ChainOfThought(FullClassificationSignature)
         
         # Cache for taxonomy data to avoid reloading for each transaction
-        self._taxonomy_cache: Dict[str, Dict] = {}
+        # Use OrderedDict for LRU eviction (max 10 taxonomies)
+        self._taxonomy_cache: OrderedDict[str, Dict] = OrderedDict()
+        self._max_cache_size = 10
         # Lock for thread-safe cache access
         self._cache_lock = threading.Lock()
 
@@ -69,74 +77,29 @@ class SpendClassifier:
 
     def _format_transaction_data(self, transaction_data: Dict) -> str:
         """Format transaction data to emphasize relevant fields"""
-        def _is_valid_value(value) -> bool:
-            """Check if value is valid and not empty"""
-            if value is None:
-                return False
-            try:
-                if pd.isna(value):
-                    return False
-            except (TypeError, ValueError):
-                # Not a pandas type, check if it's a valid string
-                pass
-            return bool(str(value).strip())
-        
         # Priority fields for classification
+        # Note: The following fields are excluded as they don't help with categorization:
+        # - department: Internal organizational code (indicates WHERE charged, not WHAT purchased)
+        # - cost_center: Internal organizational code (similar to department)
+        # - po_number: Transaction ID, not descriptive of what was purchased
+        # - invoice_number: Transaction ID, not descriptive of what was purchased
+        # - amount: Financial value doesn't indicate spend category
+        # - currency: Currency code doesn't indicate spend category
         priority_fields = {
             'line_description': 'Line Description',
-            'gl_description': 'GL Description', 
-            'department': 'Department',
-            'po_number': 'PO Number',
-            'invoice_number': 'Invoice Number',
+            'gl_description': 'GL Description',
         }
         
-        # Secondary fields
-        secondary_fields = {
-            'cost_center': 'Cost Center',
-            'amount': 'Amount',
-            'currency': 'Currency',
-        }
+        # No secondary fields - only include fields that help identify what was purchased
+        secondary_fields = {}
         
-        formatted_parts = []
-        
-        # Add priority fields first
-        formatted_parts.append("PRIMARY TRANSACTION DATA:")
-        for key, label in priority_fields.items():
-            value = transaction_data.get(key)
-            if _is_valid_value(value):
-                formatted_parts.append(f"  {label}: {value}")
-        
-        # Add secondary fields if available
-        has_secondary = any(
-            _is_valid_value(transaction_data.get(k))
-            for k in secondary_fields.keys()
-        )
-        if has_secondary:
-            formatted_parts.append("\nADDITIONAL CONTEXT:")
-            for key, label in secondary_fields.items():
-                value = transaction_data.get(key)
-                if _is_valid_value(value):
-                    formatted_parts.append(f"  {label}: {value}")
-        
-        return "\n".join(formatted_parts) if formatted_parts else "No transaction details available"
+        return format_transaction_data(transaction_data, priority_fields, secondary_fields)
 
     def _assess_transaction_data_quality(self, transaction_data: Dict) -> str:
         """Assess quality of transaction data"""
-        def _has_valid_field(field_name: str) -> bool:
-            """Check if field exists and has valid content"""
-            value = transaction_data.get(field_name)
-            if value is None:
-                return False
-            try:
-                if pd.isna(value):
-                    return False
-            except (TypeError, ValueError):
-                pass
-            return bool(str(value).strip())
-        
-        has_line_desc = _has_valid_field('line_description')
-        has_gl_desc = _has_valid_field('gl_description')
-        has_po = _has_valid_field('po_number')
+        has_line_desc = is_valid_value(transaction_data.get('line_description'))
+        has_gl_desc = is_valid_value(transaction_data.get('gl_description'))
+        has_po = is_valid_value(transaction_data.get('po_number'))
         
         if has_line_desc or has_gl_desc or has_po:
             return "HIGH - Rich transaction data available. Prioritize transaction details over supplier industry."
@@ -147,14 +110,16 @@ class SpendClassifier:
 
     def classify_transaction(
         self,
+        l1_category: str,
         supplier_profile: Dict,
         transaction_data: Union[Dict, str],
         taxonomy_yaml: Optional[Union[str, Path]] = None,
     ) -> ClassificationResult:
         """
-        Classify a spend transaction
+        Classify a spend transaction (L2-L5) given L1 category from preliminary classifier
 
         Args:
+            l1_category: L1 category from preliminary L1 classifier
             supplier_profile: Supplier information dict
             transaction_data: Transaction details dict or formatted string
             taxonomy_yaml: Path to taxonomy YAML file (overrides default if provided)
@@ -172,8 +137,21 @@ class SpendClassifier:
         taxonomy_source_str = str(taxonomy_source)
         with self._cache_lock:
             if taxonomy_source_str not in self._taxonomy_cache:
-                self._taxonomy_cache[taxonomy_source_str] = self.load_taxonomy(taxonomy_source)
-            taxonomy_data = self._taxonomy_cache[taxonomy_source_str]
+                # Evict oldest entry if cache is full
+                if len(self._taxonomy_cache) >= self._max_cache_size:
+                    self._taxonomy_cache.popitem(last=False)
+                taxonomy_data = self.load_taxonomy(taxonomy_source)
+                self._taxonomy_cache[taxonomy_source_str] = taxonomy_data
+            else:
+                # Move to end (most recently used)
+                taxonomy_data = self._taxonomy_cache.pop(taxonomy_source_str)
+                self._taxonomy_cache[taxonomy_source_str] = taxonomy_data
+
+        # Filter taxonomy by L1 category
+        filtered_taxonomy = filter_taxonomy_by_l1(taxonomy_data, l1_category)
+        
+        # Augment filtered taxonomy with "Other" categories
+        augmented_taxonomy = augment_taxonomy_with_other(filtered_taxonomy)
 
         # Prepare inputs
         supplier_json = json.dumps(supplier_profile, indent=2)
@@ -189,21 +167,22 @@ class SpendClassifier:
             transaction_json = f"{data_quality}\n\n{formatted_transaction}"
 
         # Format taxonomy as list of pipe-separated strings for LLM
-        taxonomy_list = taxonomy_data['taxonomy']
+        taxonomy_list = augmented_taxonomy['taxonomy']
         taxonomy_json = json.dumps(taxonomy_list, indent=2)
 
         # Extract available levels from taxonomy
-        available_levels = taxonomy_data.get('available_levels', ['L1', 'L2', 'L3', 'L4', 'L5'])
+        available_levels = augmented_taxonomy.get('available_levels', ['L1', 'L2', 'L3', 'L4', 'L5'])
         available_levels_str = ', '.join(available_levels)
 
         override_rules = (
-            "\n".join(taxonomy_data.get('override_rules', []))
-            if taxonomy_data.get('override_rules')
+            "\n".join(augmented_taxonomy.get('override_rules', []))
+            if augmented_taxonomy.get('override_rules')
             else "None"
         )
 
         # Call LLM
         result = self.classifier(
+            l1_category=l1_category,
             supplier_profile=supplier_json,
             transaction_data=transaction_json,
             taxonomy_structure=taxonomy_json,
@@ -212,11 +191,12 @@ class SpendClassifier:
         )
 
         # Parse levels
-        l1 = result.L1
-        l2 = result.L2 if result.L2.lower() != 'none' else None
-        l3 = result.L3 if result.L3.lower() != 'none' else None
-        l4 = result.L4 if result.L4.lower() != 'none' else None
-        l5 = result.L5 if result.L5.lower() != 'none' else None
+        # L1 should match the provided l1_category
+        l1 = result.L1 if result.L1 else l1_category
+        l2 = result.L2 if result.L2 and result.L2.lower() != 'none' else None
+        l3 = result.L3 if result.L3 and result.L3.lower() != 'none' else None
+        l4 = result.L4 if result.L4 and result.L4.lower() != 'none' else None
+        l5 = result.L5 if result.L5 and result.L5.lower() != 'none' else None
 
         reasoning = result.reasoning if hasattr(result, 'reasoning') else ""
 
@@ -237,3 +217,4 @@ class SpendClassifier:
         )
 
         return classification
+

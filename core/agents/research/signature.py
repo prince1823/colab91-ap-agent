@@ -11,7 +11,26 @@ class ResearchSignature(dspy.Signature):
     Check "Services"/"About Us" for L1. Extract address if found. Select most relevant result if multiple.
     
     Extract: industry/sector, products/services, official name, parent company, address/location.
+    Also extract enhanced classification fields: service type, NAICS/SIC codes, business model, revenue streams.
     Be concise. Use "Unknown" if not found.
+    
+    SERVICE TYPE CLASSIFICATION:
+    Classify into specific service types that map to taxonomy categories:
+    - Travel: "Travel - Airlines", "Travel - Hotels", "Travel - Restaurants", "Travel - Car Rental"
+    - IT: "IT - Hardware", "IT - Software", "IT - Cloud Services", "IT - Consulting", "IT - Telecom"
+    - Professional Services: "Professional Services - Consulting", "Professional Services - Staffing", 
+      "Professional Services - Legal", "Professional Services - Accounting"
+    - Marketing: "Marketing - Agency", "Marketing - Advertising", "Marketing - Print"
+    - Healthcare: "Healthcare - Clinical Supplies", "Healthcare - Pharmaceuticals", "Healthcare - Services"
+    - Facilities: "Facilities - Maintenance", "Facilities - Cleaning", "Facilities - Utilities"
+    - General: "General - Office Supplies", "General - Equipment", "General - Services"
+    
+    NAICS/SIC CODES:
+    Extract standardized industry codes if available. These help with precise classification.
+    Examples: NAICS "481111" (Scheduled Passenger Air Transportation), "541611" (Administrative Management Consulting)
+    
+    BUSINESS MODEL:
+    Identify primary business model: "B2B Services", "B2C Retail", "B2B Products", "Mixed"
     """
     
     supplier_name: str = dspy.InputField(
@@ -47,4 +66,30 @@ class ResearchSignature(dspy.Signature):
     )
     sources: list = dspy.OutputField(
         desc="List of source URLs used for the research"
+    )
+    
+    # Enhanced fields for better classification
+    service_type: str = dspy.OutputField(
+        desc="Specific service type classification (e.g., 'Travel - Airlines', 'IT - Hardware', 'Professional Services - Consulting'). Use 'Unknown' if cannot determine."
+    )
+    naics_code: str = dspy.OutputField(
+        desc="NAICS industry code if available (e.g., '481111', '541611'), otherwise 'Unknown'"
+    )
+    naics_description: str = dspy.OutputField(
+        desc="NAICS code description if available, otherwise 'Unknown'"
+    )
+    sic_code: str = dspy.OutputField(
+        desc="SIC industry code if available, otherwise 'Unknown'"
+    )
+    primary_business_model: str = dspy.OutputField(
+        desc="Primary business model: 'B2B Services', 'B2C Retail', 'B2B Products', 'Mixed', or 'Unknown'"
+    )
+    primary_revenue_streams: str = dspy.OutputField(
+        desc="Main revenue streams (comma-separated, e.g., 'Passenger Airfare, Cargo Services'), otherwise 'Unknown'"
+    )
+    service_categories: str = dspy.OutputField(
+        desc="Specific service categories that map to taxonomy (comma-separated, e.g., 'Security Guard Services, Access Control'), otherwise 'Unknown'"
+    )
+    target_market: str = dspy.OutputField(
+        desc="Target market: 'Enterprise', 'SMB', 'Consumer', 'Healthcare', 'Government', 'Mixed', or 'Unknown'"
     )

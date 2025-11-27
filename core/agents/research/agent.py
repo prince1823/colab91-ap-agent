@@ -1,7 +1,8 @@
 """Research agent for supplier profiles."""
 
 import json
-from typing import Any, Dict, Optional
+import logging
+from typing import Any, Dict, Optional, Tuple
 
 import dspy
 from openai import OpenAI
@@ -11,6 +12,8 @@ from core.llms.llm import get_llm_for_agent
 from core.utils.mlflow import setup_mlflow_tracing
 from core.agents.research.signature import ResearchSignature
 from core.agents.research.model import SupplierProfile
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
@@ -33,7 +36,8 @@ def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
     
     try:
         return json.loads(cleaned)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        logger.debug(f"Failed to parse JSON from text: {e}")
         return None
 
 
@@ -83,7 +87,8 @@ class ResearchAgent:
                     base_url=config.exa_base_url,
                     api_key=exa_key,
                 )
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Failed to initialize Exa client: {e}")
                 self.exa_client = None
                 self.use_exa = False
     
@@ -97,8 +102,8 @@ class ResearchAgent:
         if supplier_address:
             search_query = f"{supplier_name} {supplier_address}"
         
-        fields = "supplier_name, official_business_name, description, website_url, industry, products_services, parent_company, supplier_address"
-        prompt = f"Get the following information about {search_query} company in json format - {fields}. Use supplier address if available for more accurate search results."
+        fields = "supplier_name, official_business_name, description, website_url, industry, products_services, parent_company, supplier_address, service_type, naics_code, naics_description, sic_code, primary_business_model, primary_revenue_streams, service_categories, target_market"
+        prompt = f"Get the following information about {search_query} company in json format - {fields}. Use supplier address if available for more accurate search results. For service_type, classify into specific categories like 'Travel - Airlines', 'IT - Hardware', 'Professional Services - Consulting', etc. Extract NAICS/SIC codes if available."
         
         try:
             completion = self.exa_client.chat.completions.create(
@@ -118,8 +123,42 @@ class ResearchAgent:
             except json.JSONDecodeError:
                 # If direct parsing fails, use extraction function for code fences or extra text
                 return _extract_json_object(raw_content)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Exa search failed for {supplier_name}: {e}")
             return None
+    
+    def _detect_large_company(self, description: str, industry: str) -> Tuple[bool, Optional[str]]:
+        """
+        Detect if company is very large based on description and industry.
+        
+        Args:
+            description: Company description
+            industry: Industry sector
+            
+        Returns:
+            Tuple of (is_large_company, company_size)
+        """
+        description_lower = description.lower()
+        industry_lower = industry.lower()
+        
+        # Keywords that suggest large companies
+        large_company_keywords = [
+            'fortune 500', 'fortune 1000', 'multinational', 'global', 'enterprise',
+            'conglomerate', 'publicly traded', 'public company', 'nyse', 'nasdaq',
+            'revenue', 'employees', 'headquarters', 'subsidiaries'
+        ]
+        
+        # Check description for large company indicators
+        is_large = any(keyword in description_lower for keyword in large_company_keywords)
+        
+        # Check for specific large company patterns
+        if any(term in description_lower for term in ['thousands of employees', 'millions in revenue', 'billion']):
+            return True, 'enterprise'
+        
+        if is_large:
+            return True, 'large'
+        
+        return False, None
     
     def research_supplier(self, supplier_name: str, supplier_address: Optional[str] = None, search_results: str = None) -> SupplierProfile:
         """
@@ -152,16 +191,41 @@ class ResearchAgent:
                 else:
                     final_address = supplier_address
                 
+                # Detect large company
+                description = exa_data.get("description", "Unknown")
+                industry = exa_data.get("industry", "Unknown")
+                is_person = False  # Person detection removed
+                is_large_company, company_size = self._detect_large_company(description, industry)
+                
+                # Helper function to normalize optional fields from Exa data
+                def get_exa_field(key: str, default: Optional[str] = None) -> Optional[str]:
+                    value = exa_data.get(key)
+                    if value and str(value).strip().lower() not in ["unknown", "none", ""]:
+                        return str(value).strip()
+                    return default
+                
                 return SupplierProfile(
                     supplier_name=exa_data.get("supplier_name", supplier_name),
                     official_business_name=exa_data.get("official_business_name", "Unknown"),
-                    description=exa_data.get("description", "Unknown"),
-                    website_url=exa_data.get("website_url") if exa_data.get("website_url") and exa_data.get("website_url").lower() not in ["unknown", "none", ""] else None,
-                    industry=exa_data.get("industry", "Unknown"),
+                    description=description,
+                    website_url=get_exa_field("website_url"),
+                    industry=industry,
                     products_services=exa_data.get("products_services", "Unknown"),
-                    parent_company=exa_data.get("parent_company") if exa_data.get("parent_company") and exa_data.get("parent_company").lower() not in ["unknown", "none", ""] else None,
+                    parent_company=get_exa_field("parent_company"),
                     confidence="high",  # Exa provides structured data, so confidence is high
                     supplier_address=final_address,
+                    is_person=is_person,
+                    is_large_company=is_large_company,
+                    company_size=company_size,
+                    # Enhanced fields
+                    service_type=get_exa_field("service_type"),
+                    naics_code=get_exa_field("naics_code"),
+                    naics_description=get_exa_field("naics_description"),
+                    sic_code=get_exa_field("sic_code"),
+                    primary_business_model=get_exa_field("primary_business_model"),
+                    primary_revenue_streams=get_exa_field("primary_revenue_streams"),
+                    service_categories=get_exa_field("service_categories"),
+                    target_market=get_exa_field("target_market"),
                 )
             
         
@@ -185,17 +249,44 @@ class ResearchAgent:
         if not supplier_addr:
             supplier_addr = supplier_address
         
+        # Detect large company
+        description = result.description
+        industry = result.industry
+        is_person = False  # Person detection removed
+        is_large_company, company_size = self._detect_large_company(description, industry)
+        
+        # Helper function to normalize optional fields from LLM result
+        def get_llm_field(field_name: str, default: Optional[str] = None) -> Optional[str]:
+            if not hasattr(result, field_name):
+                return default
+            value = getattr(result, field_name, None)
+            if value and str(value).strip().lower() not in ["unknown", "none", ""]:
+                return str(value).strip()
+            return default
+        
         # Create supplier profile from LLM result
         return SupplierProfile(
             supplier_name=supplier_name,
             official_business_name=result.official_business_name,
-            description=result.description,
-            website_url=result.website_url if result.website_url.lower() != "unknown" else None,
-            industry=result.industry,
+            description=description,
+            website_url=get_llm_field("website_url"),
+            industry=industry,
             products_services=result.products_services,
-            parent_company=result.parent_company if result.parent_company.lower() not in ["none", "unknown"] else None,
+            parent_company=get_llm_field("parent_company"),
             confidence=result.confidence.lower().strip(),
             supplier_address=supplier_addr,
+            is_person=is_person,
+            is_large_company=is_large_company,
+            company_size=company_size,
+            # Enhanced fields
+            service_type=get_llm_field("service_type"),
+            naics_code=get_llm_field("naics_code"),
+            naics_description=get_llm_field("naics_description"),
+            sic_code=get_llm_field("sic_code"),
+            primary_business_model=get_llm_field("primary_business_model"),
+            primary_revenue_streams=get_llm_field("primary_revenue_streams"),
+            service_categories=get_llm_field("service_categories"),
+            target_market=get_llm_field("target_market"),
         )
     
     def __call__(self, supplier_name: str, supplier_address: Optional[str] = None, search_results: str = None) -> SupplierProfile:
