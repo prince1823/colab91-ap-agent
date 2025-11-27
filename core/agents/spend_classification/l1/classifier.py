@@ -92,6 +92,8 @@ class L1Classifier:
         
         # Check if we have meaningful line_description (the PRIMARY indicator)
         # Line description is the most important field for classification
+        # Note: The LLM will determine if line descriptions are accounting references vs. purchase descriptions
+        # based on semantic understanding, not hardcoded patterns
         line_desc = transaction_data.get('line_description')
         has_meaningful_line_desc = False
         if line_desc and is_valid_value(line_desc):
@@ -143,11 +145,13 @@ class L1Classifier:
         value_lower = value_str.lower().strip()
         # Check if the description is just a generic term or contains generic patterns
         return any(pattern in value_lower for pattern in generic_patterns) and len(value_lower.split()) <= 4
+    
 
     def classify_l1(
         self,
         transaction_data: Union[Dict, str],
         taxonomy_yaml: Optional[Union[str, Path]] = None,
+        supplier_profile: Optional[Dict] = None,
     ) -> Dict[str, str]:
         """
         Classify transaction to L1 category only
@@ -155,6 +159,8 @@ class L1Classifier:
         Args:
             transaction_data: Transaction details dict or formatted string
             taxonomy_yaml: Path to taxonomy YAML file (overrides default if provided)
+            supplier_profile: Optional supplier profile dict (industry, products_services, service_type, etc.)
+                             Use this when transaction data is sparse to improve classification
 
         Returns:
             Dictionary with 'L1', 'confidence', and 'reasoning'
@@ -192,37 +198,77 @@ class L1Classifier:
         else:
             transaction_json = self._format_transaction_data(transaction_data)
 
+        # Format supplier profile if provided
+        supplier_profile_json = ""
+        if supplier_profile:
+            # Extract key fields that help with L1 classification
+            profile_fields = {
+                'industry': supplier_profile.get('industry', ''),
+                'products_services': supplier_profile.get('products_services', ''),
+                'service_type': supplier_profile.get('service_type', ''),
+                'description': supplier_profile.get('description', ''),
+            }
+            # Only include non-empty fields
+            profile_fields = {k: v for k, v in profile_fields.items() if v and str(v).strip() and str(v).lower() not in ['unknown', 'n/a', 'none']}
+            if profile_fields:
+                supplier_profile_json = json.dumps(profile_fields, indent=2)
+
         # Format L1 categories as JSON list
         l1_categories_json = json.dumps(l1_categories, indent=2)
 
-        # Call LLM with error handling
-        try:
-            result = self.classifier(
-                transaction_data=transaction_json,
-                l1_categories=l1_categories_json,
-            )
-            
-            # Validate result
-            if not result or not hasattr(result, 'L1') or not result.L1:
-                logger.warning(f"L1 classifier returned invalid result: {result}")
-                # Return default low-confidence classification
+        # Call LLM with error handling and retry logic
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                result = self.classifier(
+                    transaction_data=transaction_json,
+                    l1_categories=l1_categories_json,
+                    supplier_profile=supplier_profile_json if supplier_profile_json else "No supplier profile available",
+                )
+                
+                # Validate result
+                if not result or not hasattr(result, 'L1') or not result.L1 or str(result.L1).strip().lower() in ['nan', 'none', 'null', '']:
+                    if attempt < max_retries:
+                        logger.warning(f"L1 classifier returned invalid result (attempt {attempt + 1}/{max_retries + 1}): {result}. Retrying...")
+                        continue
+                    else:
+                        logger.warning(f"L1 classifier returned invalid result after {max_retries + 1} attempts: {result}")
+                        # Return default low-confidence classification
+                        return {
+                            'L1': l1_categories[0] if l1_categories else 'non-clinical',
+                            'confidence': 'low',
+                            'reasoning': 'L1 classifier returned invalid result after retries, using fallback',
+                        }
+                
+                # Validate L1 is in the available categories
+                l1_value = str(result.L1).strip()
+                if l1_categories and l1_value.lower() not in [cat.lower() for cat in l1_categories]:
+                    if attempt < max_retries:
+                        logger.warning(f"L1 classifier returned category not in taxonomy (attempt {attempt + 1}/{max_retries + 1}): {l1_value}. Retrying...")
+                        continue
+                    else:
+                        logger.warning(f"L1 classifier returned invalid category after {max_retries + 1} attempts: {l1_value}. Using fallback.")
+                        return {
+                            'L1': l1_categories[0] if l1_categories else 'non-clinical',
+                            'confidence': 'low',
+                            'reasoning': f'L1 category "{l1_value}" not in taxonomy, using fallback',
+                        }
+                
                 return {
-                    'L1': l1_categories[0] if l1_categories else 'non-clinical',
-                    'confidence': 'low',
-                    'reasoning': 'L1 classifier returned invalid result, using fallback',
+                    'L1': l1_value,
+                    'confidence': result.confidence if hasattr(result, 'confidence') else 'low',
+                    'reasoning': result.reasoning if hasattr(result, 'reasoning') else "",
                 }
-            
-            return {
-                'L1': result.L1,
-                'confidence': result.confidence,
-                'reasoning': result.reasoning if hasattr(result, 'reasoning') else "",
-            }
-        except Exception as e:
-            logger.error(f"Error in L1 classification: {e}", exc_info=True)
-            # Return default low-confidence classification on error
-            return {
-                'L1': l1_categories[0] if l1_categories else 'non-clinical',
-                'confidence': 'low',
-                'reasoning': f'L1 classification failed: {str(e)}',
-            }
+            except Exception as e:
+                if attempt < max_retries:
+                    logger.warning(f"Error in L1 classification (attempt {attempt + 1}/{max_retries + 1}): {e}. Retrying...")
+                    continue
+                else:
+                    logger.error(f"Error in L1 classification after {max_retries + 1} attempts: {e}", exc_info=True)
+                    # Return default low-confidence classification on error
+                    return {
+                        'L1': l1_categories[0] if l1_categories else 'non-clinical',
+                        'confidence': 'low',
+                        'reasoning': f'L1 classification failed after retries: {str(e)}',
+                    }
 

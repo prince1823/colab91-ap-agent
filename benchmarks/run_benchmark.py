@@ -12,18 +12,19 @@ from core.pipeline import SpendClassificationPipeline
 def format_classification_output(L1, L2=None, L3=None, L4=None, L5=None) -> str:
     """Format classification result as a single string."""
     levels = []
-    if L1 and (isinstance(L1, str) or pd.notna(L1)):
-        levels.append(str(L1))
-    if L2 and (isinstance(L2, str) or pd.notna(L2)):
-        levels.append(str(L2))
-    if L3 and (isinstance(L3, str) or pd.notna(L3)):
-        levels.append(str(L3))
-    if L4 and (isinstance(L4, str) or pd.notna(L4)):
-        levels.append(str(L4))
-    if L5 and (isinstance(L5, str) or pd.notna(L5)):
-        levels.append(str(L5))
+    # Handle None, NaN, and empty strings
+    if L1 is not None and pd.notna(L1) and str(L1).strip():
+        levels.append(str(L1).strip())
+    if L2 is not None and pd.notna(L2) and str(L2).strip():
+        levels.append(str(L2).strip())
+    if L3 is not None and pd.notna(L3) and str(L3).strip():
+        levels.append(str(L3).strip())
+    if L4 is not None and pd.notna(L4) and str(L4).strip():
+        levels.append(str(L4).strip())
+    if L5 is not None and pd.notna(L5) and str(L5).strip():
+        levels.append(str(L5).strip())
     
-    return "|".join(levels)
+    return "|".join(levels) if levels else ""
 
 
 def process_single_dataset(dataset_dir: Path):

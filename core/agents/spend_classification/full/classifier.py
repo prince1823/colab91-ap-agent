@@ -180,23 +180,96 @@ class SpendClassifier:
             else "None"
         )
 
-        # Call LLM
-        result = self.classifier(
-            l1_category=l1_category,
-            supplier_profile=supplier_json,
-            transaction_data=transaction_json,
-            taxonomy_structure=taxonomy_json,
-            available_levels=available_levels_str,
-            override_rules=override_rules,
-        )
+        # Call LLM with retry logic
+        max_retries = 2
+        result = None
+        for attempt in range(max_retries + 1):
+            try:
+                result = self.classifier(
+                    l1_category=l1_category,
+                    supplier_profile=supplier_json,
+                    transaction_data=transaction_json,
+                    taxonomy_structure=taxonomy_json,
+                    available_levels=available_levels_str,
+                    override_rules=override_rules,
+                )
+                
+                # Validate result
+                if not result or not hasattr(result, 'L1') or not result.L1 or str(result.L1).strip().lower() in ['nan', 'none', 'null', '']:
+                    if attempt < max_retries:
+                        logger.warning(f"Full classifier returned invalid L1 (attempt {attempt + 1}/{max_retries + 1}): {result.L1 if hasattr(result, 'L1') else 'None'}. Retrying...")
+                        continue
+                    else:
+                        logger.warning(f"Full classifier returned invalid L1 after {max_retries + 1} attempts. Using L1 category as fallback.")
+                        # Return result with L1 from input, other levels as None
+                        return ClassificationResult(
+                            L1=l1_category,
+                            L2=None,
+                            L3=None,
+                            L4=None,
+                            L5=None,
+                            reasoning=f'Full classifier returned invalid result after retries, using L1 category: {l1_category}',
+                        )
+                
+                break  # Success, exit retry loop
+            except Exception as e:
+                if attempt < max_retries:
+                    logger.warning(f"Error in full classification (attempt {attempt + 1}/{max_retries + 1}): {e}. Retrying...")
+                    continue
+                else:
+                    logger.error(f"Error in full classification after {max_retries + 1} attempts: {e}", exc_info=True)
+                    # Return fallback result
+                    return ClassificationResult(
+                        L1=l1_category,
+                        L2=None,
+                        L3=None,
+                        L4=None,
+                        L5=None,
+                        reasoning=f'Full classification failed after retries: {str(e)}',
+                    )
+        
+        # If we get here, result should be valid
+        if not result:
+            logger.error("Full classifier returned None after all retries")
+            return ClassificationResult(
+                L1=l1_category,
+                L2=None,
+                L3=None,
+                L4=None,
+                L5=None,
+                reasoning='Full classifier returned None after retries',
+            )
 
         # Parse levels
-        # L1 should match the provided l1_category
-        l1 = result.L1 if result.L1 else l1_category
-        l2 = result.L2 if result.L2 and result.L2.lower() != 'none' else None
-        l3 = result.L3 if result.L3 and result.L3.lower() != 'none' else None
-        l4 = result.L4 if result.L4 and result.L4.lower() != 'none' else None
-        l5 = result.L5 if result.L5 and result.L5.lower() != 'none' else None
+        # L1: Use provided l1_category by default (from L1 classifier)
+        # Only override if L1 is a catch-all category (like "non-sourceable") AND LLM suggests a specific override
+        result_l1 = result.L1 if result.L1 and str(result.L1).strip().lower() not in ['nan', 'none', 'null', ''] else None
+        
+        # Check if L1 is a catch-all category that might need override
+        catch_all_categories = ['non-sourceable', 'non_sourceable', 'exempt', 'exceptions']
+        l1_is_catch_all = l1_category.strip().lower() in [cat.lower() for cat in catch_all_categories]
+        
+        if result_l1 and l1_is_catch_all:
+            # L1 is a catch-all AND LLM suggests a specific category - allow override
+            if result_l1.strip().lower() != l1_category.strip().lower():
+                l1 = result_l1  # Use LLM's override
+                logger.info(f"Full classifier overrode catch-all L1 '{l1_category}' → '{result_l1}' based on supplier profile")
+            else:
+                l1 = l1_category  # LLM agrees with catch-all, use it
+        elif result_l1 and not l1_is_catch_all:
+            # L1 is NOT a catch-all - always use the provided l1_category (respect L1 classifier's decision)
+            if result_l1.strip().lower() != l1_category.strip().lower():
+                logger.warning(f"Full classifier suggested different L1 '{result_l1}' but L1 '{l1_category}' is not catch-all. Using provided L1.")
+            l1 = l1_category  # Always use L1 classifier's output for non-catch-all categories
+        else:
+            # LLM didn't return L1 or returned invalid - use provided l1_category
+            l1 = l1_category
+            if not result_l1:
+                logger.warning(f"Full classifier returned invalid L1, using provided l1_category: '{l1_category}'")
+        l2 = result.L2 if result.L2 and str(result.L2).strip().lower() not in ['nan', 'none', 'null', ''] else None
+        l3 = result.L3 if result.L3 and str(result.L3).strip().lower() not in ['nan', 'none', 'null', ''] else None
+        l4 = result.L4 if result.L4 and str(result.L4).strip().lower() not in ['nan', 'none', 'null', ''] else None
+        l5 = result.L5 if result.L5 and str(result.L5).strip().lower() not in ['nan', 'none', 'null', ''] else None
 
         reasoning = result.reasoning if hasattr(result, 'reasoning') else ""
 
@@ -210,7 +283,8 @@ class SpendClassifier:
             override_rule_applied=(
                 result.override_rule_applied
                 if hasattr(result, 'override_rule_applied')
-                and result.override_rule_applied.lower() != 'none'
+                and result.override_rule_applied
+                and str(result.override_rule_applied).strip().lower() not in ['nan', 'none', 'null', '']
                 else None
             ),
             reasoning=reasoning,
