@@ -1,6 +1,47 @@
 """Utilities for filtering and augmenting taxonomy data."""
 
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Optional
+
+
+def is_catch_all_l1(l1_category: str) -> bool:
+    """
+    Check if L1 category is a catch-all category that might need override.
+    
+    Args:
+        l1_category: L1 category to check
+        
+    Returns:
+        True if L1 is a catch-all category, False otherwise
+    """
+    catch_all_categories = ['non-sourceable', 'non_sourceable', 'exempt', 'exceptions']
+    return l1_category.strip().lower() in [cat.lower() for cat in catch_all_categories]
+
+
+def parse_taxonomy_path(path_str: str) -> Dict[str, Optional[str]]:
+    """
+    Parse a pipe-separated taxonomy path into individual levels.
+    
+    Args:
+        path_str: Pipe-separated taxonomy path (e.g., "L1|L2|L3|L4|L5")
+        
+    Returns:
+        Dictionary with L1, L2, L3, L4, L5 keys (None for missing levels)
+    """
+    if not path_str or not isinstance(path_str, str):
+        return {'L1': None, 'L2': None, 'L3': None, 'L4': None, 'L5': None}
+    
+    levels = [level.strip() for level in str(path_str).split('|')]
+    
+    # Filter out 'None' values (string representation)
+    levels = [level if level.lower() not in ['none', 'null', 'nan', ''] else None for level in levels]
+    
+    return {
+        'L1': levels[0] if len(levels) > 0 and levels[0] else None,
+        'L2': levels[1] if len(levels) > 1 and levels[1] else None,
+        'L3': levels[2] if len(levels) > 2 and levels[2] else None,
+        'L4': levels[3] if len(levels) > 3 and levels[3] else None,
+        'L5': levels[4] if len(levels) > 4 and levels[4] else None,
+    }
 
 
 def extract_l1_categories(taxonomy_data: Dict) -> List[str]:

@@ -109,7 +109,7 @@ class FullClassificationSignature(dspy.Signature):
         desc="Transaction details (GL description, line description). NOTE: client_spend_category is a hint, NOT a taxonomy level. Department codes are internal organizational identifiers and are not useful for classification."
     )
     taxonomy_structure: str = dspy.InputField(
-        desc="Client's taxonomy filtered to paths starting with l1_category (e.g., ['L1|L2|L3', 'L1|L2|L3|L4']). Select the best matching path and split it into individual levels."
+        desc="Client's taxonomy paths. If l1_category is a catch-all category (non-sourceable, exempt, exceptions), this contains ALL taxonomy paths. Otherwise, it contains only paths starting with l1_category (e.g., ['L1|L2|L3', 'L1|L2|L3|L4']). Select the best matching path and return it as classification_path."
     )
     available_levels: str = dspy.InputField(
         desc="Available taxonomy levels (e.g., 'L1, L2, L3'). Only return levels specified here."
@@ -118,20 +118,8 @@ class FullClassificationSignature(dspy.Signature):
         desc="Override rules that take precedence (if any)"
     )
     
-    L1: str = dspy.OutputField(
-        desc="Level 1 category. IMPORTANT: You should return the provided l1_category in most cases. ONLY override if l1_category is a catch-all category (like 'non-sourceable', 'exempt', 'exceptions') AND supplier profile strongly suggests a specific category (e.g., supplier='medical supplies company' → 'clinical'). For all other cases, return the provided l1_category exactly as given."
-    )
-    L2: str = dspy.OutputField(
-        desc="Level 2 category (if applicable, otherwise 'None')"
-    )
-    L3: str = dspy.OutputField(
-        desc="Level 3 category (if applicable, otherwise 'None')"
-    )
-    L4: str = dspy.OutputField(
-        desc="Level 4 category (if applicable, otherwise 'None')"
-    )
-    L5: str = dspy.OutputField(
-        desc="Level 5 category (if applicable, otherwise 'None')"
+    classification_path: str = dspy.OutputField(
+        desc="Complete classification path in pipe-separated format: 'L1|L2|L3|L4|L5'. Use 'None' for missing levels. IMPORTANT: For L1, return the provided l1_category in most cases. ONLY override L1 if l1_category is a catch-all category (like 'non-sourceable', 'exempt', 'exceptions') AND supplier profile strongly suggests a specific category (e.g., supplier='medical supplies company' → 'clinical'). Examples: 'clinical|clinical supplies|medical-surgical supplies|medical-surgical supplies', 'it & telecom|software|software licenses fees', 'non-clinical|general & administrative|None|None'"
     )
     override_rule_applied: str = dspy.OutputField(
         desc="ID/description of override rule if applied, otherwise 'None'"

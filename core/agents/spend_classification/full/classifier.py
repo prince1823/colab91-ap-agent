@@ -20,7 +20,7 @@ from core.utils.mlflow import setup_mlflow_tracing
 from core.agents.spend_classification.full.signature import FullClassificationSignature
 from core.agents.spend_classification.model import ClassificationResult
 from core.agents.spend_classification.full.validation import ClassificationValidator
-from core.utils.taxonomy_filter import filter_taxonomy_by_l1, augment_taxonomy_with_other
+from core.utils.taxonomy_filter import filter_taxonomy_by_l1, augment_taxonomy_with_other, is_catch_all_l1, parse_taxonomy_path
 from core.utils.transaction_utils import format_transaction_data, is_valid_value
 
 logger = logging.getLogger(__name__)
@@ -147,11 +147,19 @@ class SpendClassifier:
                 taxonomy_data = self._taxonomy_cache.pop(taxonomy_source_str)
                 self._taxonomy_cache[taxonomy_source_str] = taxonomy_data
 
-        # Filter taxonomy by L1 category
-        filtered_taxonomy = filter_taxonomy_by_l1(taxonomy_data, l1_category)
+        # Check if L1 is a catch-all category - if so, use full taxonomy for override capability
+        l1_is_catch_all = is_catch_all_l1(l1_category)
         
-        # Augment filtered taxonomy with "Other" categories
-        augmented_taxonomy = augment_taxonomy_with_other(filtered_taxonomy)
+        if l1_is_catch_all:
+            # Use full taxonomy when catch-all L1 is detected (allows LLM to override to specific category)
+            logger.debug(f"L1 '{l1_category}' is catch-all, using full taxonomy for override capability")
+            taxonomy_to_augment = taxonomy_data
+        else:
+            # Filter taxonomy by L1 category for non-catch-all cases
+            taxonomy_to_augment = filter_taxonomy_by_l1(taxonomy_data, l1_category)
+        
+        # Augment taxonomy with "Other" categories
+        augmented_taxonomy = augment_taxonomy_with_other(taxonomy_to_augment)
 
         # Prepare inputs
         supplier_json = json.dumps(supplier_profile, indent=2)
@@ -195,12 +203,12 @@ class SpendClassifier:
                 )
                 
                 # Validate result
-                if not result or not hasattr(result, 'L1') or not result.L1 or str(result.L1).strip().lower() in ['nan', 'none', 'null', '']:
+                if not result or not hasattr(result, 'classification_path') or not result.classification_path:
                     if attempt < max_retries:
-                        logger.warning(f"Full classifier returned invalid L1 (attempt {attempt + 1}/{max_retries + 1}): {result.L1 if hasattr(result, 'L1') else 'None'}. Retrying...")
+                        logger.warning(f"Full classifier returned invalid classification_path (attempt {attempt + 1}/{max_retries + 1}): {result.classification_path if hasattr(result, 'classification_path') else 'None'}. Retrying...")
                         continue
                     else:
-                        logger.warning(f"Full classifier returned invalid L1 after {max_retries + 1} attempts. Using L1 category as fallback.")
+                        logger.warning(f"Full classifier returned invalid classification_path after {max_retries + 1} attempts. Using L1 category as fallback.")
                         # Return result with L1 from input, other levels as None
                         return ClassificationResult(
                             L1=l1_category,
@@ -240,14 +248,18 @@ class SpendClassifier:
                 reasoning='Full classifier returned None after retries',
             )
 
-        # Parse levels
-        # L1: Use provided l1_category by default (from L1 classifier)
-        # Only override if L1 is a catch-all category (like "non-sourceable") AND LLM suggests a specific override
-        result_l1 = result.L1 if result.L1 and str(result.L1).strip().lower() not in ['nan', 'none', 'null', ''] else None
+        # Parse classification_path from single output field
+        classification_path = result.classification_path if hasattr(result, 'classification_path') else None
+        if not classification_path or str(classification_path).strip().lower() in ['nan', 'none', 'null', '']:
+            logger.warning(f"Full classifier returned invalid classification_path, using L1 category as fallback: {l1_category}")
+            parsed_levels = {'L1': l1_category, 'L2': None, 'L3': None, 'L4': None, 'L5': None}
+        else:
+            # Parse the pipe-separated path into individual levels
+            parsed_levels = parse_taxonomy_path(str(classification_path).strip())
         
-        # Check if L1 is a catch-all category that might need override
-        catch_all_categories = ['non-sourceable', 'non_sourceable', 'exempt', 'exceptions']
-        l1_is_catch_all = l1_category.strip().lower() in [cat.lower() for cat in catch_all_categories]
+        # Handle L1 override logic
+        result_l1 = parsed_levels.get('L1')
+        l1_is_catch_all = is_catch_all_l1(l1_category)
         
         if result_l1 and l1_is_catch_all:
             # L1 is a catch-all AND LLM suggests a specific category - allow override
@@ -261,15 +273,20 @@ class SpendClassifier:
             if result_l1.strip().lower() != l1_category.strip().lower():
                 logger.warning(f"Full classifier suggested different L1 '{result_l1}' but L1 '{l1_category}' is not catch-all. Using provided L1.")
             l1 = l1_category  # Always use L1 classifier's output for non-catch-all categories
+            # Update parsed_levels to use provided L1
+            parsed_levels['L1'] = l1_category
         else:
             # LLM didn't return L1 or returned invalid - use provided l1_category
             l1 = l1_category
+            parsed_levels['L1'] = l1_category
             if not result_l1:
-                logger.warning(f"Full classifier returned invalid L1, using provided l1_category: '{l1_category}'")
-        l2 = result.L2 if result.L2 and str(result.L2).strip().lower() not in ['nan', 'none', 'null', ''] else None
-        l3 = result.L3 if result.L3 and str(result.L3).strip().lower() not in ['nan', 'none', 'null', ''] else None
-        l4 = result.L4 if result.L4 and str(result.L4).strip().lower() not in ['nan', 'none', 'null', ''] else None
-        l5 = result.L5 if result.L5 and str(result.L5).strip().lower() not in ['nan', 'none', 'null', ''] else None
+                logger.warning(f"Full classifier returned invalid L1 in path, using provided l1_category: '{l1_category}'")
+        
+        # Extract other levels from parsed path
+        l2 = parsed_levels.get('L2')
+        l3 = parsed_levels.get('L3')
+        l4 = parsed_levels.get('L4')
+        l5 = parsed_levels.get('L5')
 
         reasoning = result.reasoning if hasattr(result, 'reasoning') else ""
 
