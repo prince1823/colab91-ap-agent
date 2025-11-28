@@ -276,12 +276,15 @@ class SpendClassificationPipeline:
                 }
                 
                 # Collect results as they complete
+                error_by_pos = {}  # Map position to error
                 for future in as_completed(future_to_pos):
                     pos = future_to_pos[future]
                     result_pos, result, error = future.result()
                     classification_results[result_pos] = result
                     if error:
                         errors.append(error)
+                        # Map error to position for easier lookup
+                        error_by_pos[result_pos] = error.get('error', str(error))
 
         # Step 4: Add classification columns to DataFrame
         result_df = canonical_df.copy()
@@ -298,6 +301,12 @@ class SpendClassificationPipeline:
             r.override_rule_applied if r and hasattr(r, 'override_rule_applied') and r.override_rule_applied else None for r in classification_results
         ]
         result_df['reasoning'] = [r.reasoning if r and hasattr(r, 'reasoning') and r.reasoning else None for r in classification_results]
+
+        # Add error column - match errors to their corresponding positions
+        result_df['error'] = [
+            error_by_pos.get(pos, None) if pos in error_by_pos else None
+            for pos in range(len(result_df))
+        ]
 
         # Store errors as attribute for inspection
         result_df.attrs['classification_errors'] = errors
