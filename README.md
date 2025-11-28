@@ -363,7 +363,7 @@ colab91-ap-agent/
 │   ├── agents/
 │   │   ├── column_canonicalization/  # Column mapping agent
 │   │   ├── research/                 # Supplier research agent
-│   │   ├── research_decision/        # Research decision agent
+│   │   ├── context_prioritization/   # Context prioritization agent (research & prioritization decisions)
 │   │   └── spend_classification/    # Classification agents
 │   │       ├── l1/                   # L1 classifier
 │   │       └── full/                 # Full L1-L5 classifier

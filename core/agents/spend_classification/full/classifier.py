@@ -20,6 +20,7 @@ from core.utils.mlflow import setup_mlflow_tracing
 from core.agents.spend_classification.full.signature import FullClassificationSignature
 from core.agents.spend_classification.model import ClassificationResult
 from core.agents.spend_classification.full.validation import ClassificationValidator
+from core.agents.context_prioritization.model import PrioritizationDecision
 from core.utils.taxonomy_filter import filter_taxonomy_by_l1, augment_taxonomy_with_other, is_catch_all_l1, parse_taxonomy_path
 from core.utils.transaction_utils import format_transaction_data, is_valid_value
 
@@ -114,6 +115,7 @@ class SpendClassifier:
         supplier_profile: Dict,
         transaction_data: Union[Dict, str],
         taxonomy_yaml: Optional[Union[str, Path]] = None,
+        prioritization_decision: Optional[PrioritizationDecision] = None,
     ) -> ClassificationResult:
         """
         Classify a spend transaction (L2-L5) given L1 category from preliminary classifier
@@ -187,6 +189,16 @@ class SpendClassifier:
             if augmented_taxonomy.get('override_rules')
             else "None"
         )
+        
+        # Format prioritization decision fields
+        if prioritization_decision:
+            prioritization_strategy = prioritization_decision.prioritization_strategy
+            supplier_context_strength = prioritization_decision.supplier_context_strength
+            transaction_data_quality = prioritization_decision.transaction_data_quality
+        else:
+            prioritization_strategy = "n/a"
+            supplier_context_strength = "none"
+            transaction_data_quality = "unknown"
 
         # Call LLM with retry logic
         max_retries = 2
@@ -200,6 +212,9 @@ class SpendClassifier:
                     taxonomy_structure=taxonomy_json,
                     available_levels=available_levels_str,
                     override_rules=override_rules,
+                    prioritization_strategy=prioritization_strategy,
+                    supplier_context_strength=supplier_context_strength,
+                    transaction_data_quality=transaction_data_quality,
                 )
                 
                 # Validate result

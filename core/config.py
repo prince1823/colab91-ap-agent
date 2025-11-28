@@ -104,6 +104,9 @@ class AppConfig(BaseSettings):
     spend_classification_llm: str = Field(
         default="openai", alias="SPEND_CLASSIFICATION_LLM"
     )
+    context_prioritization_llm: str = Field(
+        default="openai", alias="CONTEXT_PRIORITIZATION_LLM"
+    )
 
     # LLM Provider Settings
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)

@@ -18,6 +18,7 @@ from core.llms.llm import get_llm_for_agent
 from core.utils.mlflow import setup_mlflow_tracing
 from core.utils.taxonomy_filter import extract_l1_categories
 from core.agents.spend_classification.l1.signature import L1ClassificationSignature
+from core.agents.context_prioritization.model import PrioritizationDecision
 from core.utils.transaction_utils import format_transaction_data, is_valid_value
 
 logger = logging.getLogger(__name__)
@@ -152,6 +153,7 @@ class L1Classifier:
         transaction_data: Union[Dict, str],
         taxonomy_yaml: Optional[Union[str, Path]] = None,
         supplier_profile: Optional[Dict] = None,
+        prioritization_decision: Optional[PrioritizationDecision] = None,
     ) -> Dict[str, str]:
         """
         Classify transaction to L1 category only
@@ -215,6 +217,16 @@ class L1Classifier:
 
         # Format L1 categories as JSON list
         l1_categories_json = json.dumps(l1_categories, indent=2)
+        
+        # Format prioritization decision fields
+        if prioritization_decision:
+            prioritization_strategy = prioritization_decision.prioritization_strategy
+            supplier_context_strength = prioritization_decision.supplier_context_strength
+            transaction_data_quality = prioritization_decision.transaction_data_quality
+        else:
+            prioritization_strategy = "n/a"
+            supplier_context_strength = "none"
+            transaction_data_quality = "unknown"
 
         # Call LLM with error handling and retry logic
         max_retries = 2
@@ -224,6 +236,9 @@ class L1Classifier:
                     transaction_data=transaction_json,
                     l1_categories=l1_categories_json,
                     supplier_profile=supplier_profile_json if supplier_profile_json else "No supplier profile available",
+                    prioritization_strategy=prioritization_strategy,
+                    supplier_context_strength=supplier_context_strength,
+                    transaction_data_quality=transaction_data_quality,
                 )
                 
                 # Validate result

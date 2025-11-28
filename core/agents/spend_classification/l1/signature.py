@@ -175,7 +175,19 @@ class L1ClassificationSignature(dspy.Signature):
     - GL="accounts payable" (generic), Line="", Supplier="" →
       ✅ CORRECT: "non-clinical" with confidence="low" (most general category, not "non-sourceable")
     
-    PRIORITY (IMPORTANT - READ CAREFULLY):
+    PRIORITIZATION STRATEGY (CRITICAL - FOLLOW STRICTLY):
+    
+    Use the provided prioritization_strategy to determine how to weight supplier context vs transaction data:
+    
+    - If prioritization_strategy is 'supplier_primary': Prioritize supplier context (name/profile) over transaction data. Use supplier context as PRIMARY signal, transaction data as secondary.
+    - If prioritization_strategy is 'transaction_primary': Prioritize transaction data over supplier context. Use transaction data as PRIMARY signal, supplier context as secondary.
+    - If prioritization_strategy is 'balanced': Use both supplier context and transaction data equally. Consider both signals when making classification decision.
+    - If prioritization_strategy is 'supplier_only': Ignore transaction data completely (likely accounting reference). Use ONLY supplier context for classification.
+    - If prioritization_strategy is 'n/a': Use default priority (transaction data first, then supplier context if transaction data is sparse).
+    
+    The prioritization_strategy was determined by analyzing supplier_context_strength and transaction_data_quality. Follow it strictly.
+    
+    DEFAULT PRIORITY (when prioritization_strategy is 'n/a'):
     1. Line description - PRIMARY source (tells you WHAT was purchased)
        ⚠️ EXCEPTION: Use semantic understanding to determine if line description is:
        - A purchase description (describes products/services purchased) → USE for classification
@@ -210,13 +222,22 @@ class L1ClassificationSignature(dspy.Signature):
     """
     
     transaction_data: str = dspy.InputField(
-        desc="Transaction details (GL description, line description). If transaction data is sparse (generic GL, accounting references, or empty), use supplier name/profile context as PRIMARY signal to infer spend category. Supplier names and profiles directly indicate business domain and should be prioritized when transaction descriptions are missing or generic."
+        desc="Transaction details (GL description, line description)."
     )
     supplier_profile: str = dspy.InputField(
-        desc="Optional supplier profile information (industry, products/services, service_type). Use this when transaction data is sparse to infer the spend category. If provided, this is a STRONG signal for classification when transaction data is generic or missing."
+        desc="Optional supplier profile information (industry, products/services, service_type). Use this when transaction data is sparse to infer the spend category."
     )
     l1_categories: str = dspy.InputField(
         desc="List of available L1 categories (e.g., ['clinical', 'non-clinical', 'it & telecom', 'exempt']). Select the best matching category."
+    )
+    prioritization_strategy: str = dspy.InputField(
+        desc="How to weight supplier context vs transaction data: 'supplier_primary' (prioritize supplier), 'transaction_primary' (prioritize transaction), 'balanced' (use both equally), 'supplier_only' (ignore transaction data), or 'n/a' (not available). Use this strategy to determine which signals to prioritize."
+    )
+    supplier_context_strength: str = dspy.InputField(
+        desc="Strength of supplier context signal: 'strong' (specific industry/products), 'medium' (some context), 'weak' (generic), or 'none' (no profile/name)."
+    )
+    transaction_data_quality: str = dspy.InputField(
+        desc="Quality of transaction data: 'rich' (specific, descriptive), 'sparse' (missing/empty), 'generic' (vague terms), or 'accounting_reference' (journal entries, invoice numbers)."
     )
     
     L1: str = dspy.OutputField(

@@ -16,20 +16,38 @@ class FullClassificationSignature(dspy.Signature):
     STEP 0: ASSESS L1 VALIDITY
     The provided l1_category is from preliminary classification. Before using it, assess:
     
-    L1 OVERRIDE RULE: If l1_category is "non-sourceable" (or similar catch-all) AND supplier profile
-    strongly suggests a specific category (e.g., supplier="medical supplies company" → "clinical"),
-    you may override L1 to use the supplier profile category instead.
+    L1 OVERRIDE RULE (AGENTIC DECISION):
+    If l1_category is a catch-all category (e.g., "non-sourceable", "exempt", "exceptions") AND supplier profile
+    strongly suggests a specific category, you may override L1 to use the supplier profile category instead.
     
-    PRINCIPLE: Supplier profile is STRONG signal when transaction data is sparse. If L1 is a catch-all
-    category but supplier profile clearly indicates a specific spend category, prioritize supplier profile.
+    Decision Criteria:
+    1. **Assess Supplier Profile Strength**: Use provided supplier_context_strength:
+       - If "strong": Supplier profile is specific and reliable (specific industry, products/services)
+       - If "medium" or "weak": Supplier profile is less reliable, be cautious about override
+       - If "none": Cannot override (no supplier context)
+    
+    2. **Assess Business Context**: Consider the full business context:
+       - Industry: What industry does the supplier operate in?
+       - Business Model: What is the supplier's primary business model?
+       - Target Market: Who does the supplier serve?
+       - Products/Services: What does the supplier actually provide?
+       - NOT just product/service name - consider the full business domain
+    
+    3. **Consider Taxonomy Structure**: What L1 categories are available in taxonomy_structure?
+       - Map the supplier's business context to the most appropriate L1 category
+       - Use semantic understanding to match business domain to taxonomy
+    
+    PRINCIPLE: When overriding catch-all, consider the full business context - industry, business model, target market - 
+    not just product/service name. Use semantic understanding to map supplier profile to the most appropriate L1 category 
+    from available taxonomy.
     
     If L1 override is needed:
-    - Use supplier profile to determine correct L1 category
+    - Use supplier profile (considering full business context) to determine correct L1 category
     - Find taxonomy paths starting with the corrected L1 category
     - Return the corrected L1 in your response
     
-    If L1 is valid:
-    - Only consider paths that start with the provided L1 category
+    If L1 is valid (not catch-all or supplier profile doesn't strongly suggest override):
+    - Only consider paths that start with the provided l1_category
     
     CLASSIFICATION PROCEDURE:
     1. Assess if L1 needs override (catch-all category + strong supplier profile signal)
@@ -41,7 +59,28 @@ class FullClassificationSignature(dspy.Signature):
     STRATEGY - Bottom-Up: Identify deepest confident level first (ideally L3+). L2 auto-determined from path.
     Example: "laptops" → L3="IT Hardware" → L2="IT Hardware" auto-determined from path.
     
-    PRIORITY (CRITICAL - READ CAREFULLY):
+    TAXONOMY DEPTH PREFERENCE (CRITICAL):
+    - Always select the deepest matching path available in the taxonomy
+    - Prefer specific categories over generic 'Other' categories when both are available
+    - If multiple paths match at different depths, choose the deepest one you're confident about
+    - Examples:
+      * If both "L1|L2|L3" and "L1|L2|L3|L4" match, prefer "L1|L2|L3|L4" (deeper path)
+      * If both "L1|L2|Other" and "L1|L2|L3|Specific Category" match, prefer "L1|L2|L3|Specific Category" (more specific)
+    - Bottom-Up approach: Identify deepest confident level first (ideally L3+), then work backwards to fill L2
+    
+    PRIORITIZATION STRATEGY (CRITICAL - FOLLOW STRICTLY):
+    
+    Use the provided prioritization_strategy to determine how to weight supplier profile vs transaction data:
+    
+    - If prioritization_strategy is 'supplier_primary': Prioritize supplier profile over transaction data. Use supplier profile as PRIMARY signal, transaction data as secondary.
+    - If prioritization_strategy is 'transaction_primary': Prioritize transaction data over supplier profile. Use transaction data as PRIMARY signal, supplier profile as secondary.
+    - If prioritization_strategy is 'balanced': Use both supplier profile and transaction data equally. Consider both signals when making classification decision.
+    - If prioritization_strategy is 'supplier_only': Ignore transaction data completely (likely accounting reference). Use ONLY supplier profile for classification.
+    - If prioritization_strategy is 'n/a': Use default priority (transaction data first, then supplier profile if transaction data is sparse).
+    
+    The prioritization_strategy was determined by analyzing supplier_context_strength and transaction_data_quality. Follow it strictly.
+    
+    DEFAULT PRIORITY (when prioritization_strategy is 'n/a'):
     
     When transaction data is SPARSE (generic GL like "accounts payable" + accounting references):
     1. Supplier profile is PRIMARY signal - use it exclusively
@@ -116,6 +155,15 @@ class FullClassificationSignature(dspy.Signature):
     )
     override_rules: str = dspy.InputField(
         desc="Override rules that take precedence (if any)"
+    )
+    prioritization_strategy: str = dspy.InputField(
+        desc="How to weight supplier profile vs transaction data: 'supplier_primary' (prioritize supplier), 'transaction_primary' (prioritize transaction), 'balanced' (use both equally), 'supplier_only' (ignore transaction data), or 'n/a' (not available). Use this strategy to determine which signals to prioritize."
+    )
+    supplier_context_strength: str = dspy.InputField(
+        desc="Strength of supplier context signal: 'strong' (specific industry/products), 'medium' (some context), 'weak' (generic), or 'none' (no profile/name)."
+    )
+    transaction_data_quality: str = dspy.InputField(
+        desc="Quality of transaction data: 'rich' (specific, descriptive), 'sparse' (missing/empty), 'generic' (vague terms), or 'accounting_reference' (journal entries, invoice numbers)."
     )
     
     classification_path: str = dspy.OutputField(
