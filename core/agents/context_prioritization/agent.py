@@ -43,16 +43,96 @@ class ContextPrioritizationAgent:
         self.decision_agent = dspy.ChainOfThought(ContextPrioritizationSignature)
     
     def _format_transaction_data(self, transaction_data: Dict[str, Any]) -> str:
-        """Format transaction data for assessment."""
+        """Format transaction data for assessment - present all data neutrally.
+        
+        No hardcoded priorities - let LLM assess context and decide what matters.
+        Format matches Spend Classification Agent for consistency.
+        """
         parts = []
         
-        line_desc = transaction_data.get('line_description')
-        gl_desc = transaction_data.get('gl_description')
+        # Organize fields by type (same structure as Spend Classification Agent)
+        structured_fields = []
+        description_fields = []
+        reference_fields = []
+        other_fields = []
         
-        if is_valid_value(line_desc):
-            parts.append(f"Line Description: {line_desc}")
-        if is_valid_value(gl_desc):
-            parts.append(f"GL Description: {gl_desc}")
+        # Structured/contextual fields
+        if is_valid_value(transaction_data.get('department')):
+            structured_fields.append(('Department', transaction_data['department']))
+        
+        if is_valid_value(transaction_data.get('gl_code')):
+            structured_fields.append(('GL Code', transaction_data['gl_code']))
+        
+        if is_valid_value(transaction_data.get('cost_center')):
+            structured_fields.append(('Cost Center', transaction_data['cost_center']))
+        
+        if is_valid_value(transaction_data.get('amount')):
+            try:
+                amount_val = float(str(transaction_data['amount']).replace(',', ''))
+                amount_str = f"${amount_val:,.2f}" if amount_val >= 1 else f"${amount_val:.2f}"
+                structured_fields.append(('Amount', amount_str))
+            except (ValueError, TypeError):
+                structured_fields.append(('Amount', transaction_data['amount']))
+        
+        # Reference/identifier fields
+        if is_valid_value(transaction_data.get('po_number')):
+            reference_fields.append(('PO Number', transaction_data['po_number']))
+        
+        if is_valid_value(transaction_data.get('invoice_number')):
+            reference_fields.append(('Invoice Number', transaction_data['invoice_number']))
+        
+        if is_valid_value(transaction_data.get('invoice_date')):
+            reference_fields.append(('Invoice Date', transaction_data['invoice_date']))
+        
+        # Description fields (present raw - LLM identifies patterns)
+        if is_valid_value(transaction_data.get('line_description')):
+            description_fields.append(('Line Description', transaction_data['line_description']))
+        
+        if is_valid_value(transaction_data.get('gl_description')):
+            description_fields.append(('GL Description', transaction_data['gl_description']))
+        
+        # Other fields
+        excluded_fields = {'supplier_name', 'L1', 'L2', 'L3', 'L4', 'L5', 'classification_path', 
+                          'pipeline_output', 'expected_output', 'error', 'reasoning',
+                          'line_description', 'gl_description', 'department', 'gl_code', 
+                          'invoice_number', 'po_number', 'invoice_date', 'amount', 'cost_center',
+                          'currency', 'supplier_address'}
+        for key, value in sorted(transaction_data.items()):
+            if key not in excluded_fields and is_valid_value(value):
+                other_fields.append((key.replace('_', ' ').title(), value))
+        
+        # Format sections
+        if structured_fields:
+            parts.append("Transaction Context:")
+            for label, value in structured_fields:
+                parts.append(f"  {label}: {value}")
+        
+        if description_fields:
+            if parts:
+                parts.append("")
+            parts.append("Descriptions:")
+            for label, value in description_fields:
+                display_value = str(value)
+                if len(display_value) > 200:
+                    display_value = display_value[:197] + "..."
+                parts.append(f"  {label}: {display_value}")
+        
+        if reference_fields:
+            if parts:
+                parts.append("")
+            parts.append("References:")
+            for label, value in reference_fields:
+                parts.append(f"  {label}: {value}")
+        
+        if other_fields:
+            if parts:
+                parts.append("")
+            parts.append("Additional Information:")
+            for label, value in other_fields:
+                display_value = str(value)
+                if len(display_value) > 150:
+                    display_value = display_value[:147] + "..."
+                parts.append(f"  {label}: {display_value}")
         
         return "\n".join(parts) if parts else "No transaction details available"
     
@@ -183,20 +263,18 @@ class ContextPrioritizationAgent:
             )
         except Exception as e:
             logger.warning(f"Context prioritization LLM call failed: {e}")
-            # Fallback: Default to transaction_primary unless transaction data is sparse/accounting reference
-            is_accounting_ref = self._detect_accounting_reference(transaction_data)
-            transaction_quality = "accounting_reference" if is_accounting_ref else ("sparse" if not (has_line_desc and has_gl_desc) else "rich")
+            # Fallback: Simple defaults without hardcoded pattern detection
+            # Let LLM handle pattern detection - just use basic heuristics for fallback
+            transaction_quality = "sparse" if not (has_line_desc or has_gl_desc) else "rich"
             
-            # NEW DEFAULT: transaction_primary unless transaction data is truly unusable
-            if transaction_quality in ["sparse", "accounting_reference"] and supplier_profile:
-                priority_strategy = "supplier_primary" if transaction_quality == "accounting_reference" else "supplier_primary"
-            elif transaction_quality == "rich":
-                priority_strategy = "transaction_primary"
+            # Simple fallback prioritization (no hardcoded patterns)
+            if supplier_profile:
+                priority_strategy = "balanced"  # Default to balanced when both available
             else:
-                priority_strategy = "transaction_primary"  # Default to transaction even if not perfect
+                priority_strategy = "transaction_primary"  # Use transaction if no supplier profile
             
             return PrioritizationDecision(
-                should_research=not (has_line_desc and has_gl_desc) if not supplier_profile else False,
+                should_research=not (has_line_desc or has_gl_desc) if not supplier_profile else False,
                 prioritization_strategy=priority_strategy,
                 supplier_context_strength="strong" if supplier_profile else "none",
                 transaction_data_quality=transaction_quality,

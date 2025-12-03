@@ -58,8 +58,6 @@ class SpendClassificationPipeline:
         self.expert_classifier = ExpertClassifier(
             taxonomy_path=taxonomy_path, enable_tracing=enable_tracing
         )
-        # Pass research agent to expert classifier for company domain research
-        self.expert_classifier.research_agent = self.research_agent
 
         # Cache for supplier profiles to avoid duplicate research calls
         self._supplier_cache: Dict[str, Dict] = {}

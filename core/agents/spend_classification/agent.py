@@ -41,7 +41,7 @@ class ExpertClassifier:
         self._taxonomy_cache: Dict[str, Dict] = {}
         self._cache_lock = threading.Lock()
         self._current_taxonomy: List[str] = []
-        self.research_agent = None  # Will be set by pipeline for company domain research
+        self.research_agent = None  # Research agent (for supplier research, not company domain context)
         self._company_context_cache: Dict[str, str] = {}  # Cache company domain context
         self._classifier = None  # ChainOfThought classifier instance
         self.db_manager = None  # Will be set by pipeline for BootstrapFewShot examples
@@ -71,51 +71,104 @@ class ExpertClassifier:
         return json.dumps({k: v for k, v in relevant.items() if v}, indent=2)
 
     def _format_transaction_info(self, transaction_data: Dict) -> str:
-        """Format transaction data, emphasizing line_description as PRIMARY signal.
+        """Format transaction data, presenting all available signals clearly.
         
-        Includes all available transaction fields, prioritizing canonical fields
-        but also including any unmapped columns that might contain useful information.
+        No hardcoded priorities or pattern detection - presents raw data organized
+        by field type. The LLM will identify patterns and decide what matters.
         """
         parts = []
         
-        # PRIMARY signal - format prominently
-        if is_valid_value(transaction_data.get('line_description')):
-            parts.append(f"Line Description (PRIMARY): {transaction_data['line_description']}")
-        
-        # SECONDARY but important canonical fields
-        if is_valid_value(transaction_data.get('gl_description')):
-            parts.append(f"GL Description (SECONDARY): {transaction_data['gl_description']}")
-        
-        # Other canonical fields that might be useful
-        for field in ['department', 'gl_code', 'invoice_number', 'po_number', 'invoice_date', 'amount']:
-            if is_valid_value(transaction_data.get(field)):
-                parts.append(f"{field.replace('_', ' ').title()}: {transaction_data[field]}")
-        
-        # Include any other unmapped fields that might contain useful information
-        # (exclude supplier_name as it's handled separately, and classification result fields)
-        excluded_fields = {'supplier_name', 'L1', 'L2', 'L3', 'L4', 'L5', 'classification_path', 
-                          'pipeline_output', 'expected_output', 'error', 'reasoning'}
+        # Organize fields by type for clarity, but present all available data
+        structured_fields = []
+        description_fields = []
+        reference_fields = []
         other_fields = []
+        
+        # Structured/contextual fields
+        if is_valid_value(transaction_data.get('department')):
+            structured_fields.append(('Department', transaction_data['department']))
+        
+        if is_valid_value(transaction_data.get('gl_code')):
+            structured_fields.append(('GL Code', transaction_data['gl_code']))
+        
+        if is_valid_value(transaction_data.get('cost_center')):
+            structured_fields.append(('Cost Center', transaction_data['cost_center']))
+        
+        if is_valid_value(transaction_data.get('amount')):
+            try:
+                amount_val = float(str(transaction_data['amount']).replace(',', ''))
+                amount_str = f"${amount_val:,.2f}" if amount_val >= 1 else f"${amount_val:.2f}"
+                structured_fields.append(('Amount', amount_str))
+            except (ValueError, TypeError):
+                structured_fields.append(('Amount', transaction_data['amount']))
+        
+        # Reference/identifier fields
+        if is_valid_value(transaction_data.get('po_number')):
+            reference_fields.append(('PO Number', transaction_data['po_number']))
+        
+        if is_valid_value(transaction_data.get('invoice_number')):
+            reference_fields.append(('Invoice Number', transaction_data['invoice_number']))
+        
+        if is_valid_value(transaction_data.get('invoice_date')):
+            reference_fields.append(('Invoice Date', transaction_data['invoice_date']))
+        
+        # Description fields (present raw - LLM identifies patterns)
+        if is_valid_value(transaction_data.get('line_description')):
+            description_fields.append(('Line Description', transaction_data['line_description']))
+        
+        if is_valid_value(transaction_data.get('gl_description')):
+            description_fields.append(('GL Description', transaction_data['gl_description']))
+        
+        # Other fields
+        excluded_fields = {'supplier_name', 'L1', 'L2', 'L3', 'L4', 'L5', 'classification_path', 
+                          'pipeline_output', 'expected_output', 'error', 'reasoning',
+                          'line_description', 'gl_description', 'department', 'gl_code', 
+                          'invoice_number', 'po_number', 'invoice_date', 'amount', 'cost_center',
+                          'currency', 'supplier_address'}
         for key, value in sorted(transaction_data.items()):
             if key not in excluded_fields and is_valid_value(value):
-                # Skip if already included above
-                if key not in ['line_description', 'gl_description', 'department', 'gl_code', 
-                              'invoice_number', 'po_number', 'invoice_date', 'amount']:
-                    other_fields.append(f"{key}: {value}")
+                other_fields.append((key.replace('_', ' ').title(), value))
+        
+        # Format sections
+        if structured_fields:
+            parts.append("Transaction Context:")
+            for label, value in structured_fields:
+                parts.append(f"  {label}: {value}")
+        
+        if description_fields:
+            if parts:
+                parts.append("")
+            parts.append("Descriptions:")
+            for label, value in description_fields:
+                # Show full description - LLM will identify patterns
+                display_value = str(value)
+                if len(display_value) > 200:
+                    display_value = display_value[:197] + "..."
+                parts.append(f"  {label}: {display_value}")
+        
+        if reference_fields:
+            if parts:
+                parts.append("")
+            parts.append("References:")
+            for label, value in reference_fields:
+                parts.append(f"  {label}: {value}")
         
         if other_fields:
-            parts.append("\nAdditional Transaction Fields:")
-            parts.extend(other_fields)
-        
-        # Supplier name (for reference, not primary classification signal)
-        if is_valid_value(transaction_data.get('supplier_name')):
-            parts.append(f"\nSupplier Name: {transaction_data['supplier_name']}")
+            if parts:
+                parts.append("")
+            parts.append("Additional Information:")
+            for label, value in other_fields:
+                display_value = str(value)
+                if len(display_value) > 150:
+                    display_value = display_value[:147] + "..."
+                parts.append(f"  {label}: {display_value}")
         
         return "\n".join(parts) if parts else "No transaction details available"
 
     def _get_relevant_taxonomy_paths(self, transaction_data: Dict, supplier_profile: Dict, taxonomy_list: List[str]) -> Dict[str, List[str]]:
         """
         Use semantic search to find relevant taxonomy paths based on transaction and supplier data.
+        Prioritizes STRONG signals first (supplier profile, department, GL code) over weak signals (descriptions).
         Groups paths by L1 category for better hierarchical organization.
         
         Returns:
@@ -123,15 +176,8 @@ class ExpertClassifier:
         """
         search_queries = []
         
-        # Extract search terms from transaction data (what was purchased)
-        if is_valid_value(transaction_data.get('line_description')):
-            search_queries.append(str(transaction_data['line_description']))
-        if is_valid_value(transaction_data.get('gl_description')):
-            search_queries.append(str(transaction_data['gl_description']))
-        if is_valid_value(transaction_data.get('department')):
-            search_queries.append(str(transaction_data['department']))
-        
-        # Extract search terms from supplier profile (who it was purchased from)
+        # STRONG SIGNALS FIRST (priority order)
+        # 1. Supplier profile (PRIMARY)
         if supplier_profile:
             if supplier_profile.get('products_services'):
                 search_queries.append(str(supplier_profile['products_services']))
@@ -139,6 +185,25 @@ class ExpertClassifier:
                 search_queries.append(str(supplier_profile['service_type']))
             if supplier_profile.get('industry'):
                 search_queries.append(str(supplier_profile['industry']))
+        
+        # 2. Department/Business Unit (HIGH signal)
+        if is_valid_value(transaction_data.get('department')):
+            search_queries.append(str(transaction_data['department']))
+        
+        # 3. GL Code (HIGH signal - structured codes)
+        if is_valid_value(transaction_data.get('gl_code')):
+            search_queries.append(str(transaction_data['gl_code']))
+        
+        # 4. Cost Center (organizational context)
+        if is_valid_value(transaction_data.get('cost_center')):
+            search_queries.append(str(transaction_data['cost_center']))
+        
+        # WEAK SIGNALS LAST (only if we need more queries)
+        if len(search_queries) < 3:
+            if is_valid_value(transaction_data.get('line_description')):
+                search_queries.append(str(transaction_data['line_description']))
+            if is_valid_value(transaction_data.get('gl_description')):
+                search_queries.append(str(transaction_data['gl_description']))
         
         # Use semantic search to find relevant paths for each query
         # Collect all matches with their scores
@@ -207,26 +272,28 @@ class ExpertClassifier:
     
     def _format_taxonomy_sample_by_l1(self, l1_grouped_paths: Dict[str, List[str]]) -> str:
         """
-        Format taxonomy paths as a flat list (same format as before).
+        Format taxonomy paths sorted by depth (deepest first) to encourage bottom-up matching.
         The L1-grouping logic in selection improves which paths are chosen,
-        but we don't need to show the grouping to the LLM.
+        but we present them sorted by depth to encourage matching from most specific to least.
         
         Args:
             l1_grouped_paths: Dictionary mapping L1 category to list of paths
             
         Returns:
-            Formatted string with paths in flat list format (same as old method)
+            Formatted string with paths sorted by depth (deepest first)
         """
         if not l1_grouped_paths:
             return "No relevant paths found."
         
-        # Flatten the grouped paths into a simple list (same format as before)
+        # Flatten the grouped paths into a simple list
         flat_paths = []
         for paths in l1_grouped_paths.values():
             flat_paths.extend(paths)
         
-        # Format same as old method: just paths, one per line
-        return "Relevant taxonomy paths (semantically matched):\n" + "\n".join(flat_paths)
+        # Sort by depth descending (most specific/deepest paths first) for bottom-up matching
+        flat_paths.sort(key=lambda p: (-len(p.split("|")), p))
+        
+        return "Relevant taxonomy paths (deepest/most specific paths first - match these end nodes first):\n" + "\n".join(flat_paths)
     
     def _extract_domain_context(
         self, 
@@ -234,8 +301,8 @@ class ExpertClassifier:
         dataset_name: Optional[str] = None
     ) -> str:
         """
-        Extract company domain context using web search.
-        Always attempts to search for company information to provide domain context.
+        Extract company domain context from taxonomy YAML file.
+        Reads company_context field from taxonomy if available, otherwise falls back to company name.
         """
         cache_key = f"{taxonomy_path}|{dataset_name}"
         if cache_key in self._company_context_cache:
@@ -243,29 +310,43 @@ class ExpertClassifier:
         
         context_parts = []
         
-        # Extract company name from taxonomy filename
-        taxonomy_filename = str(taxonomy_path).split('/')[-1] if '/' in str(taxonomy_path) else str(taxonomy_path)
-        company_name = taxonomy_filename.split('_')[0] if '_' in taxonomy_filename else taxonomy_filename.replace('.yaml', '').replace('.YAML', '')
+        # Try to load company context from taxonomy YAML file
+        try:
+            taxonomy_data = self.load_taxonomy(taxonomy_path)
+            
+            # Check for company_context field in taxonomy
+            company_context = taxonomy_data.get('company_context')
+            if company_context:
+                # Support both string and dict formats
+                if isinstance(company_context, str):
+                    context_parts.append(company_context)
+                elif isinstance(company_context, dict):
+                    # Format dict fields into readable context
+                    if company_context.get('industry'):
+                        context_parts.append(f"Company Industry: {company_context['industry']}")
+                    if company_context.get('description'):
+                        desc = str(company_context['description'])
+                        context_parts.append(f"Company Description: {desc[:300]}")
+                    if company_context.get('sector'):
+                        context_parts.append(f"Company Sector: {company_context['sector']}")
+                    if company_context.get('business_focus'):
+                        context_parts.append(f"Business Focus: {company_context['business_focus']}")
+            
+            # Also include client_name from taxonomy if available
+            client_name = taxonomy_data.get('client_name')
+            if client_name and not company_context:
+                context_parts.append(f"Company Name: {client_name}")
+        except Exception as e:
+            logger.debug(f"Could not load company context from taxonomy: {e}")
         
-        # Use web search to get company domain context if research agent is available
-        # NOTE: This adds latency (Exa API call ~1-3s per company). 
-        # DISABLED for performance - using company name/dataset only for now
-        # Can be re-enabled if needed, but it significantly slows down benchmarks
-        # if self.research_agent and company_name and company_name.lower() not in ['taxonomy', 'taxonomies']:
-        #     try:
-        #         company_profile = self.research_agent.research_supplier(company_name)
-        #         if company_profile and company_profile.industry:
-        #             context_parts.append(f"Company Industry: {company_profile.industry}")
-        #             if company_profile.description:
-        #                 desc = company_profile.description[:200]
-        #                 context_parts.append(f"Company Description: {desc}")
-        #     except Exception as e:
-        #         logger.debug(f"Company domain research failed for {company_name}: {e}")
+        # Fallback: Extract company name from taxonomy filename if no context found
+        if not context_parts:
+            taxonomy_filename = str(taxonomy_path).split('/')[-1] if '/' in str(taxonomy_path) else str(taxonomy_path)
+            company_name = taxonomy_filename.split('_')[0] if '_' in taxonomy_filename else taxonomy_filename.replace('.yaml', '').replace('.YAML', '')
+            if company_name and company_name.lower() not in ['taxonomy', 'taxonomies']:
+                context_parts.append(f"Company Name: {company_name}")
         
-        # Always include company name and dataset for context
-        if company_name and company_name.lower() not in ['taxonomy', 'taxonomies']:
-            context_parts.append(f"Company Name: {company_name}")
-        
+        # Add dataset name if provided
         if dataset_name:
             context_parts.append(f"Dataset: {dataset_name}")
         
@@ -314,20 +395,28 @@ class ExpertClassifier:
             if not successful_examples:
                 return []
             
-            # Build query text from current transaction
+            # Build query text from current transaction - prioritize STRONG signals
             query_parts = []
-            if is_valid_value(transaction_data.get('line_description')):
-                query_parts.append(str(transaction_data['line_description']))
-            if is_valid_value(transaction_data.get('gl_description')):
-                query_parts.append(str(transaction_data['gl_description']))
-            if is_valid_value(transaction_data.get('department')):
-                query_parts.append(str(transaction_data['department']))
             
+            # STRONG SIGNALS FIRST
             if supplier_profile:
                 if supplier_profile.get('products_services'):
                     query_parts.append(str(supplier_profile['products_services']))
                 if supplier_profile.get('service_type'):
                     query_parts.append(str(supplier_profile['service_type']))
+            
+            if is_valid_value(transaction_data.get('department')):
+                query_parts.append(str(transaction_data['department']))
+            
+            if is_valid_value(transaction_data.get('gl_code')):
+                query_parts.append(str(transaction_data['gl_code']))
+            
+            # WEAK SIGNALS LAST (only if needed)
+            if len(query_parts) < 2:
+                if is_valid_value(transaction_data.get('line_description')):
+                    query_parts.append(str(transaction_data['line_description']))
+                if is_valid_value(transaction_data.get('gl_description')):
+                    query_parts.append(str(transaction_data['gl_description']))
             
             if not query_parts:
                 return []
@@ -341,18 +430,24 @@ class ExpertClassifier:
                 ex_trans = example.get('transaction_data', {})
                 ex_supplier = example.get('supplier_profile', {})
                 
-                if is_valid_value(ex_trans.get('line_description')):
-                    example_parts.append(str(ex_trans['line_description']))
-                if is_valid_value(ex_trans.get('gl_description')):
-                    example_parts.append(str(ex_trans['gl_description']))
-                if is_valid_value(ex_trans.get('department')):
-                    example_parts.append(str(ex_trans['department']))
-                
+                # STRONG SIGNALS FIRST
                 if ex_supplier:
                     if ex_supplier.get('products_services'):
                         example_parts.append(str(ex_supplier['products_services']))
                     if ex_supplier.get('service_type'):
                         example_parts.append(str(ex_supplier['service_type']))
+                
+                if is_valid_value(ex_trans.get('department')):
+                    example_parts.append(str(ex_trans['department']))
+                
+                if is_valid_value(ex_trans.get('gl_code')):
+                    example_parts.append(str(ex_trans['gl_code']))
+                
+                # WEAK SIGNALS LAST
+                if is_valid_value(ex_trans.get('line_description')):
+                    example_parts.append(str(ex_trans['line_description']))
+                if is_valid_value(ex_trans.get('gl_description')):
+                    example_parts.append(str(ex_trans['gl_description']))
                 
                 if example_parts:
                     example_texts.append(" ".join(example_parts[:3]))
@@ -425,9 +520,13 @@ class ExpertClassifier:
             ex_trans = example.get('transaction_data', {})
             classification_path = example.get('classification_path', '')
             
-            # Use only most important fields, truncate to keep tokens low
+            # Use strong signals first for example description
             desc = ""
-            if is_valid_value(ex_trans.get('line_description')):
+            if is_valid_value(ex_trans.get('department')):
+                desc = f"Dept: {str(ex_trans['department'])[:60]}"
+            elif is_valid_value(ex_trans.get('gl_code')):
+                desc = f"GL: {str(ex_trans['gl_code'])[:60]}"
+            elif is_valid_value(ex_trans.get('line_description')):
                 desc = str(ex_trans['line_description'])[:80]  # Truncate to 80 chars
             elif is_valid_value(ex_trans.get('gl_description')):
                 desc = str(ex_trans['gl_description'])[:80]
@@ -544,9 +643,26 @@ class ExpertClassifier:
                 reasoning += f" [Corrected to valid path: {classification_path}]"
                 logger.debug(f"Invalid path corrected: {classification_path}")
             else:
-                # Fallback: use semantic search to find best match
-                query = transaction_data.get('line_description') or transaction_data.get('gl_description') or ''
-                if query:
+                # Fallback: use semantic search with strong signals first
+                query_parts = []
+                if is_valid_value(transaction_data.get('department')):
+                    query_parts.append(str(transaction_data['department']))
+                if is_valid_value(transaction_data.get('gl_code')):
+                    query_parts.append(str(transaction_data['gl_code']))
+                if supplier_profile:
+                    if supplier_profile.get('products_services'):
+                        query_parts.append(str(supplier_profile['products_services']))
+                    if supplier_profile.get('service_type'):
+                        query_parts.append(str(supplier_profile['service_type']))
+                # Weak signals last
+                if not query_parts:
+                    if is_valid_value(transaction_data.get('line_description')):
+                        query_parts.append(str(transaction_data['line_description']))
+                    if is_valid_value(transaction_data.get('gl_description')):
+                        query_parts.append(str(transaction_data['gl_description']))
+                
+                if query_parts:
+                    query = " ".join(query_parts[:2])  # Use top 2 parts
                     matches = lookup_paths(str(query), taxonomy_list)
                     if matches:
                         classification_path = matches[0]
@@ -559,9 +675,24 @@ class ExpertClassifier:
             # Search for paths starting with this L1
             l1_paths = [p for p in taxonomy_list if p.lower().startswith(classification_path.lower() + "|")]
             if l1_paths:
-                # Try to find most relevant deeper path using semantic search
-                query = transaction_data.get('line_description') or transaction_data.get('gl_description') or ''
-                if query:
+                # Try to find most relevant deeper path using semantic search with strong signals
+                query_parts = []
+                if is_valid_value(transaction_data.get('department')):
+                    query_parts.append(str(transaction_data['department']))
+                if is_valid_value(transaction_data.get('gl_code')):
+                    query_parts.append(str(transaction_data['gl_code']))
+                if supplier_profile:
+                    if supplier_profile.get('products_services'):
+                        query_parts.append(str(supplier_profile['products_services']))
+                # Weak signals as fallback
+                if not query_parts:
+                    if is_valid_value(transaction_data.get('line_description')):
+                        query_parts.append(str(transaction_data['line_description']))
+                    if is_valid_value(transaction_data.get('gl_description')):
+                        query_parts.append(str(transaction_data['gl_description']))
+                
+                if query_parts:
+                    query = " ".join(query_parts[:2])
                     matches = lookup_paths(str(query), l1_paths)
                     if matches:
                         classification_path = matches[0]
@@ -570,6 +701,10 @@ class ExpertClassifier:
                         # Fallback to first deeper path
                         classification_path = l1_paths[0]
                         reasoning += f" [Auto-expanded from L1 to: {classification_path}]"
+                else:
+                    # Fallback to first deeper path if no query available
+                    classification_path = l1_paths[0]
+                    reasoning += f" [Auto-expanded from L1 to: {classification_path}]"
 
         return self._path_to_result(classification_path, confidence, reasoning)
 

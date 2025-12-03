@@ -1,5 +1,10 @@
 client_name: FOX Corporation
 project_id: FOX_20230816_161348
+company_context:
+  industry: "Media & Entertainment"
+  sector: "Broadcast Television"
+  description: "Media and entertainment company operating broadcast networks, news channels, and sports programming. Primary business focus on television production, distribution, content creation, and advertising revenue generation."
+  business_focus: "Television broadcasting, news production, sports programming, content distribution, and media operations"
 max_taxonomy_depth: 3
 available_levels:
 - L1

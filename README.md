@@ -355,6 +355,84 @@ if errors:
 - If `return_intermediate=False`: `pd.DataFrame` with classification results
 - If `return_intermediate=True`: `Tuple[pd.DataFrame, Dict]` containing results and intermediate data
 
+### Taxonomy Configuration
+
+Taxonomy files are YAML files that define the classification structure and can include additional company context to improve classification accuracy.
+
+#### Taxonomy File Structure
+
+Each taxonomy YAML file contains:
+
+- `client_name` - Company name
+- `project_id` - Project identifier
+- `max_taxonomy_depth` - Maximum depth of taxonomy levels
+- `available_levels` - List of available levels (e.g., ["L1", "L2", "L3"])
+- `taxonomy` - List of pipe-separated taxonomy paths (e.g., "L1|L2|L3|...")
+- `override_rules` - List of business rules for specific classification overrides
+- `company_context` - (Optional) Additional company context to improve classification
+
+#### Adding Company Context
+
+You can add additional company context to your taxonomy YAML file to provide domain-specific information that helps the classification agent make better decisions. This replaces the need for web search and provides more reliable, client-controlled context.
+
+**Option 1: Simple String Format**
+
+Add a `company_context` field with a plain text description:
+
+```yaml
+client_name: FOX Corporation
+project_id: FOX_20230816_161348
+max_taxonomy_depth: 3
+available_levels:
+- L1
+- L2
+- L3
+company_context: "Media and entertainment company operating broadcast networks, news channels, and sports programming. Primary business focus on television production, distribution, and advertising revenue."
+taxonomy:
+- aviation costs|air traffic control|air traffic control
+- marketing & print|agency|agency fees
+...
+```
+
+**Option 2: Structured Dictionary Format**
+
+For more detailed context, use a dictionary with specific fields:
+
+```yaml
+client_name: Innova Care Health
+project_id: Innova_Care_Health_Jun_23
+max_taxonomy_depth: 4
+available_levels:
+- L1
+- L2
+- L3
+- L4
+company_context:
+  industry: "Healthcare"
+  sector: "Healthcare Services"
+  description: "Healthcare provider operating multiple facilities with focus on clinical services, patient care, and medical equipment procurement."
+  business_focus: "Patient care delivery, clinical operations, and medical supply chain management"
+taxonomy:
+- clinical|clinical equipment|diagnostic imaging equipment|diagnostic imaging equipment
+- non clinical|facilities|utilities|energy - electricity, heating oil & natural gas
+...
+```
+
+**Supported Fields in Dictionary Format**:
+- `industry` - Primary industry classification
+- `sector` - Business sector
+- `description` - Company description (supports up to 300 characters in output)
+- `business_focus` - Primary business focus or operational areas
+
+**Benefits of Adding Company Context**:
+- Improves classification accuracy by providing domain-specific context
+- Helps the LLM understand industry-specific terminology
+- Faster than web search (no API calls)
+- Consistent and controllable by the client
+- Works even when web search APIs are unavailable
+
+**Note**: If `company_context` is not provided in the taxonomy file, the system will fall back to using the company name extracted from the taxonomy filename.
+
 ## Project Structure
 
 ```

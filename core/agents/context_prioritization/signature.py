@@ -9,57 +9,59 @@ class ContextPrioritizationSignature(dspy.Signature):
     1. Research Decision: Should we research the supplier? (when supplier_profile is not available)
     2. Prioritization Decision: How to weight supplier context vs transaction data? (when both are available)
     
-    ASSESSMENT FRAMEWORK:
+    CONTEXTUAL ASSESSMENT APPROACH:
+    Evaluate all available signals contextually - assess their relevance and reliability for THIS specific
+    transaction, rather than following hardcoded rules. Let the context guide your assessment.
     
     1. TRANSACTION DATA QUALITY ASSESSMENT:
-       - Detect accounting references: journal entries, invoice numbers, entity names followed by dates
-       - Detect generic GL terms: "accounts payable", "t&e payable", "accrued invoices"
-       - Assess specificity: Are descriptions specific (e.g., "Surgical gloves") or generic (e.g., "services")?
-       - Classify as: "rich" (specific, descriptive), "sparse" (missing/empty), "generic" (vague terms), or "accounting_reference" (journal entries, invoice numbers)
+       - Review all available transaction fields (Department, GL Code, Cost Center, PO Number, Amount,
+         Invoice Date, Line Description, GL Description, etc.)
+       - Assess contextually: Are descriptions specific and useful, or generic/accounting jargon?
+       - Identify patterns you observe (tax/VAT, payment processing, accounting references, etc.)
+       - Consider: Does the transaction data clearly indicate what was purchased, or is it vague?
+       - Classify as: "rich" (helpful, specific data), "sparse" (missing/empty), "generic" (vague),
+         or "accounting_reference" (describes processing/entity rather than purchase)
     
     2. SUPPLIER CONTEXT STRENGTH ASSESSMENT (if supplier_profile available):
-       - Analyze supplier name: Domain-specific names (e.g., "medical supplies", "telecom") are strong signals
-       - Analyze supplier profile: Industry, products_services, service_type, NAICS/SIC codes
-       - Classify as: "strong" (specific industry/products), "medium" (some context), "weak" (generic), or "none" (no profile)
+       - Review supplier profile: Industry, products/services, service_type, NAICS/SIC codes
+       - Assess: How specific and relevant is this supplier information for classification?
+       - Consider: Does supplier profile clearly indicate what they provide?
+       - Classify as: "strong" (specific, relevant), "medium" (some context), "weak" (generic), 
+         or "none" (no profile)
     
-    3. PERSON DETECTION (CHECK FIRST - BEFORE RESEARCH DECISION):
+    3. PERSON DETECTION (for research decision):
        - If supplier_name appears to be an individual person → should_research="no"
-       - Person indicators: Personal names (first + last name pattern), titles (Dr., Mr., Mrs., Ms., Prof.), no business entity suffixes (Inc., LLC, Corp, Ltd, Company, Co.)
-       - Examples of persons: "John Smith", "Jane Doe, MD", "Dr. Robert Johnson", "Mary Williams"
-       - Examples of businesses: "Smith & Co", "John Smith LLC", "Smith Company", "Smith Inc"
-       - When supplier is a person: Research won't provide meaningful business/industry context. Skip research and rely ONLY on transaction data for classification.
+       - Person indicators: Personal names (first + last name), titles (Dr., Mr., etc.), 
+         no business suffixes (Inc., LLC, Corp, etc.)
+       - Examples: "John Smith", "Dr. Jane Doe" → person; "Smith & Co", "John Smith LLC" → business
     
     4. RESEARCH DECISION (when supplier_profile is None):
-       - If supplier_name indicates a PERSON → should_research="no" (research won't help, focus on transaction data only)
-       - If transaction_data_quality is "sparse"/"generic"/"accounting_reference" → should_research="yes"
-       - If transaction_data_quality is "rich" AND supplier_name is generic → should_research="no"
-       - If transaction_data_quality is "rich" AND supplier_name is domain-specific → assess if research would help
-       - Use semantic understanding for ambiguous cases
+       - If supplier is a person → should_research="no" (research won't help)
+       - Assess: Would supplier research add useful context for classification?
+       - Consider: Transaction data quality, supplier name specificity, domain context
+       - Make contextual decision based on whether research would meaningfully help
     
     5. PRIORITIZATION DECISION (when supplier_profile is available):
-       DEFAULT RULE: Transaction data is PRIMARY unless it's unusable
-       - If transaction_data_quality is "rich" → ALWAYS use "transaction_primary" (even if supplier is strong)
-       - If transaction_data_quality is "generic" AND supplier_context_strength is "strong" → "supplier_primary"
-       - If transaction_data_quality is "sparse" AND supplier_context_strength is "strong" → "supplier_primary"
-       - If transaction_data is "accounting_reference" → "supplier_only" (ignore transaction data completely)
-       - If transaction_data_quality is "rich" AND supplier_context_strength is "strong" AND they align → "balanced"
-       - If transaction_data_quality is "rich" AND transaction conflicts with supplier → "transaction_primary" (trust specific transaction details)
-       - Use semantic understanding for nuanced edge cases
+       - Evaluate contextually: For THIS transaction, which signals are most reliable?
+       - Consider: Supplier profile relevance vs transaction data specificity
+       - Consider: Are transaction descriptions specific, or generic/accounting references?
+       - Consider: Patterns you've identified (tax/VAT, payment processing, etc.) - do they indicate
+         special categories that might override supplier profile?
+       - Decide based on context:
+         * "supplier_primary": Supplier profile is most reliable for this transaction
+         * "transaction_primary": Transaction data is most reliable for this transaction
+         * "balanced": Both provide useful, complementary information
+         * "supplier_only": Transaction data is not useful (e.g., accounting references only)
     
-    PRINCIPLES (UPDATED - Transaction Data Priority):
-    - DEFAULT: Transaction data is the PRIMARY signal when it exists and is meaningful
-    - Accounting references describe WHO (entity) or HOW (processing), not WHAT (purchase) - treat as low quality
-    - Generic GL terms are accounting codes, not spend categories - treat as low quality
-    - Supplier names/profile are FALLBACK signals when transaction data is sparse/generic/missing
-    - Transaction data is strong signal when it's specific and descriptive - ALWAYS prioritize this
-    - Conflicts between supplier and transaction data: 
-      * If transaction data is SPECIFIC (e.g., "AWS Cloud Services", "Surgical gloves") → TRUST TRANSACTION DATA
-      * If transaction data is VAGUE/GENERIC (e.g., "services", "goods") → Use supplier profile
-      * Transaction specificity wins over supplier profile
+    CONTEXTUAL REASONING:
+    - Don't follow hardcoded rules - evaluate each transaction on its own merits
+    - Consider all available signals and their contextual relevance
+    - Identify patterns (tax/VAT, accounting references, etc.) contextually
+    - Make decisions that make sense for THIS specific transaction
     """
     
     transaction_data: str = dspy.InputField(
-        desc="Transaction details (line description, GL description)"
+        desc="Transaction details organized by field type (Transaction Context, Descriptions, References, Additional Information). Evaluate all fields contextually - assess what's useful for THIS transaction rather than applying hardcoded priorities."
     )
     supplier_name: str = dspy.InputField(
         desc="Supplier name (if available, 'None' if not available)"

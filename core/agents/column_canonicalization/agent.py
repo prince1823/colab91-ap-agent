@@ -199,13 +199,15 @@ class ColumnCanonicalizationAgent:
                 client_to_canonical[client_col] = []
             client_to_canonical[client_col].append(canonical_col)
         
-        # Build the canonical dataframe by copying client columns for each canonical column
-        df_canonical = pd.DataFrame(index=df.index)
+        # Build the canonical dataframe by collecting all columns first, then creating DataFrame in one operation
+        # This avoids DataFrame fragmentation from repeated column assignments
         
+        # Step 1: Collect mapped columns (canonical_col -> client_col data)
+        canonical_columns = {}
         for canonical_col, client_col in mapping_result.mappings.items():
             if client_col in df.columns:
                 # Copy the client column data to the canonical column
-                df_canonical[canonical_col] = df[client_col]
+                canonical_columns[canonical_col] = df[client_col].copy()
                 
                 # Log if this client column maps to multiple canonical columns
                 if len(client_to_canonical[client_col]) > 1:
@@ -216,19 +218,22 @@ class ColumnCanonicalizationAgent:
             else:
                 logger.warning(f"Client column '{client_col}' not found in input data, skipping canonical column '{canonical_col}'")
         
-        # Preserve important unmapped columns identified by the canonicalization agent
+        # Step 2: Add important unmapped columns identified by the canonicalization agent
         # These are columns that don't map to canonical columns but contain useful information for classification
         for col in mapping_result.important_unmapped_columns:
-            if col in df.columns and col not in df_canonical.columns:
+            if col in df.columns and col not in canonical_columns:
                 # Preserve this important unmapped column
-                df_canonical[col] = df[col]
+                canonical_columns[col] = df[col].copy()
                 logger.debug(f"Preserving important unmapped column: {col}")
         
-        # Ensure canonical columns exist (even if empty) for consistency
-        canonical_columns = list(mapping_result.mappings.keys())
-        for canonical_col in canonical_columns:
-            if canonical_col not in df_canonical.columns:
-                # Canonical column doesn't exist - create empty column
-                df_canonical[canonical_col] = None
+        # Step 3: Ensure all canonical columns exist (even if empty) for consistency
+        all_canonical_cols = list(mapping_result.mappings.keys())
+        for canonical_col in all_canonical_cols:
+            if canonical_col not in canonical_columns:
+                # Canonical column doesn't exist - create empty column with None values
+                canonical_columns[canonical_col] = pd.Series([None] * len(df), index=df.index)
+        
+        # Step 4: Create DataFrame in one operation to avoid fragmentation
+        df_canonical = pd.DataFrame(canonical_columns, index=df.index)
         
         return df_canonical

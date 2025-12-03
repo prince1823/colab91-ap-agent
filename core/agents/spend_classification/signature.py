@@ -4,45 +4,89 @@ import dspy
 
 
 class SpendClassificationSignature(dspy.Signature):
-    """Classify business transactions into taxonomy categories.
+    """Classify business transactions into taxonomy categories using contextual reasoning.
     
-    PROCESS:
-    1. Check for tax/VAT patterns first: "vertex", "vat", "indirect tax", "sales tax", "reverse charge" → exceptions|government / taxes
-       (Exception: "tax ON something" → classify underlying purchase)
-    2. Assess transaction data (line_description, GL description): SPECIFIC/GENERIC/MISSING/MISLEADING
-    3. Select L1: Use transaction data if SPECIFIC; use supplier profile if GENERIC/MISSING. L1 wrong = all wrong.
-    4. Select path: Choose deepest path (min L1|L2|L3) from pre-searched paths matching transaction data
+    APPROACH: Use contextual pattern recognition - evaluate all available signals and decide
+    what matters most for THIS specific transaction based on the context.
     
-    WHAT vs WHO (Transaction Data vs Supplier):
-    - WHAT (transaction data) is PRIMARY when SPECIFIC. Use when: clear product/service names, category descriptions, abbreviated GL with category signals (IT, pharmacy, travel codes)
-    - WHO (supplier profile) is SECONDARY. Use when: WHAT is GENERIC ("services", "goods"), MISSING, MISLEADING (accounting codes), or ACCOUNTING_REFERENCE (invoice numbers only)
-    - Parse abbreviations: Extract category keywords from GL (department codes, equipment types). Abbreviated GL with category signals = SPECIFIC
-    - Supplier PRIMARY SERVICE (what they sell) vs INDUSTRY (what they operate in): Use PRIMARY SERVICE when WHAT is missing
-    - When WHAT conflicts with WHO: Trust SPECIFIC transaction data; use WHO if WHAT is VAGUE/MISLEADING
+    CONTEXTUAL PATTERN RECOGNITION:
+    - Tax/VAT patterns: When you see "vertex", "vat", "indirect tax", "sales tax", "reverse charge" in 
+      descriptions, these often indicate a tax/regulatory category (e.g., exceptions|government / taxes).
+      However, if it's "tax ON something" (like "sales tax on software"), classify the underlying purchase.
+    - Supplier Profile: Understand what the supplier typically provides (industry, products/services).
+      This is often reliable, but consider: does the transaction match what the supplier sells?
+    - Department/Business Unit: Organizational context - often aligns with spend categories.
+    - GL Code: Structured codes may contain category hints - examine them for patterns.
+    - Descriptions: Can be highly specific and useful OR generic/accounting jargon - evaluate each case.
+      Accounting references ("accounts payable", "accrued invoices") are usually less useful than
+      specific product/service descriptions.
     
-    RULES:
-    - Ignore payment codes: "accounts payable", "accrued invoices", "t&e payable" are not categories
+    PROCESS (Contextual Bottom-Up):
+    1. Review all available signals and contextual patterns (tax/VAT, payment processing, etc.)
+    2. Start from specific taxonomy paths (deepest/most specific) and work backward to L1
+    3. Match transaction context to taxonomy paths - use ALL signals that seem relevant
+    4. For each transaction, reason about which signals are most trustworthy for THIS case:
+       - If supplier profile clearly matches transaction → use it
+       - If department/GL code align → use them
+       - If descriptions are specific → use them
+       - If patterns suggest special category (tax, payment processing) → consider that context
+    5. Consider signal reliability:
+       - Specific descriptions > Generic descriptions
+       - Supplier's primary service > Supplier's industry (when transaction-specific)
+       - Clear patterns (tax/VAT) > Ambiguous signals
+       - Transaction-specific signals > Generic organizational context
+    
+    USE TRANSACTION AMOUNT FOR PATTERNS:
+    - Large one-time amounts (>$50k) → Capital equipment, major services, construction, infrastructure
+    - Small recurring amounts (same amount monthly/quarterly) → Subscriptions, utilities, recurring services, software licenses
+    - Medium recurring amounts → Professional services contracts, maintenance agreements
+    - Variable amounts → Usage-based services, one-time purchases
+    - Very large amounts (>$100k) → Major projects, enterprise contracts, capital investments
+    
+    USE INVOICE DATE FOR PATTERNS:
+    - Recurring dates (same day monthly/quarterly) → Recurring subscriptions/services
+    - Seasonal patterns → Category-specific timing (holiday marketing, year-end services)
+    
+    USE PO NUMBER:
+    - Same PO across multiple transactions → Related purchases, same project/category
+    - PO indicates contract → May have pre-categorized spend patterns
+    
+    USE COST CENTER:
+    - Organizational alignment with departments → Spend category context
+    - Cost center codes often indicate business function → Category hints
+    
+    CONTEXTUAL REASONING EXAMPLES:
+    - Tax/VAT transactions: If you see tax/VAT patterns and taxonomy has "exceptions|government / taxes",
+      strongly consider that path. Tax patterns often override other signals because they indicate
+      a regulatory/exception category rather than business spend.
+    - Supplier vs Transaction: If supplier sells "payroll services" but transaction shows "vertex tax",
+      the tax pattern may indicate this is actually a tax transaction, not payroll. Reason about context.
+    - Specific descriptions: "AWS Cloud Services" is more reliable than "services" - use the specific one.
+    - Accounting codes: "accounts payable" or "accrued invoices" are accounting processes, not categories.
+      However, descriptions WITHIN those codes might be useful.
+    
+    GENERAL RULES:
     - NEVER return just L1 - must have L1|L2|L3 minimum
-    - Prefer specific categories over "Other"
-    - Distinguish consumption expenses (meals, services consumed) from operational purchases (supplies, equipment, infrastructure). Services/platforms that deliver meals = meal expenses, not operational supplies.
-    - Airlines → travel & entertainment|airfare (not aviation fuel)
-    - Medical suppliers → clinical|clinical supplies (not clinical services) when buying supplies
+    - Prefer specific categories over "Other" when confident
+    - Distinguish consumption expenses (meals, services consumed) from operational purchases
+    - Consider context: What matters most for THIS transaction given all available signals?
+    - Patterns in descriptions (tax, payment processing) are contextual clues - evaluate their relevance
     """
     
     supplier_info: str = dspy.InputField(
-        desc="JSON with supplier name, industry, products/services, service_type. Use as SECONDARY signal when transaction data is sparse/generic."
+        desc="JSON with supplier name, industry, products/services, service_type. Understand what the supplier typically provides - this context helps inform classification, but evaluate if it matches the transaction."
     )
     transaction_info: str = dspy.InputField(
-        desc="Transaction details with PRIMARY signal marked: line_description (what was purchased - PRIMARY), gl_description (accounting code - SECONDARY, may be misleading)"
+        desc="Transaction details with all available signals and contextual patterns. Includes: Department, GL Code, Amount, PO Number, Cost Center, Invoice Date, and descriptions. Contextual patterns (tax/VAT, payment processing) are highlighted if detected. Evaluate all signals contextually - decide what matters most for THIS transaction."
     )
     taxonomy_sample: str = dspy.InputField(
-        desc="Sample taxonomy paths showing structure and L1 categories available"
+        desc="Taxonomy paths sorted by depth (deepest first). Start matching from the END (most specific categories) and work backward to L1. Consider all transaction signals when matching to taxonomy paths."
     )
     prioritization: str = dspy.InputField(
-        desc="Which signal to prioritize: 'supplier_primary', 'transaction_primary', 'balanced', or 'supplier_only'"
+        desc="Suggested prioritization hint: 'supplier_primary', 'transaction_primary', 'balanced', or 'supplier_only'. Use as guidance, but make your own contextual assessment of what matters most for this transaction."
     )
     domain_context: str = dspy.InputField(
-        desc="Company name/industry context to inform L1 selection (healthcare→clinical, media→marketing, etc.)"
+        desc="Company context (industry, sector, business_focus) from taxonomy file. Use this context to inform your understanding of the business domain - it may help narrow L1 selection when other signals are ambiguous."
     )
     
     classification_path: str = dspy.OutputField(
