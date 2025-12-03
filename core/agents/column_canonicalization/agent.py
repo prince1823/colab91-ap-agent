@@ -1,10 +1,13 @@
 """Column canonicalization agent."""
 
 import json
+import logging
 from typing import Dict, List, Optional
 
 import dspy
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 from core.config import get_config
 from core.llms.llm import get_llm_for_agent
@@ -98,6 +101,7 @@ class ColumnCanonicalizationAgent:
         mappings = json.loads(result.mappings.strip()) if result.mappings.strip() else {}
         unmapped_client = json.loads(result.unmapped_client_columns.strip()) if result.unmapped_client_columns.strip() else []
         unmapped_canonical = json.loads(result.unmapped_canonical_columns.strip()) if result.unmapped_canonical_columns.strip() else []
+        important_unmapped = json.loads(result.important_unmapped_columns.strip()) if result.important_unmapped_columns.strip() else []
         
         # Compute unmapped if not provided by LLM
         client_columns = {col.get("column_name") for col in client_schema}
@@ -158,6 +162,7 @@ class ColumnCanonicalizationAgent:
             mappings=mappings,
             confidence=result.confidence.lower().strip() if result.confidence else "medium",
             unmapped_client_columns=unmapped_client,
+            important_unmapped_columns=important_unmapped,
             unmapped_canonical_columns=unmapped_canonical,
             validation_passed=validation_passed,
             validation_errors=validation_errors + validation_warnings,
@@ -183,40 +188,47 @@ class ColumnCanonicalizationAgent:
                 f"Cannot apply mapping with validation errors: {mapping_result.validation_errors}"
             )
         
-        # Create reverse mapping (client_col -> canonical_col)
-        # Handle case where multiple canonical columns map to same client column
-        reverse_mapping = {}
+        # Handle mappings where multiple canonical columns map to the same client column
+        # We want to duplicate the client column for each canonical column that maps to it
+        # This preserves all important fields (e.g., both gl_description and line_description)
+        
+        # Track which client columns are mapped to multiple canonical columns
+        client_to_canonical = {}
         for canonical_col, client_col in mapping_result.mappings.items():
-            if client_col in reverse_mapping:
-                # Multiple canonical columns map to same client column
-                # Use the first one, or create a list (we'll handle this by duplicating the column)
-                logger.warning(f"Multiple canonical columns ({reverse_mapping[client_col]}, {canonical_col}) map to same client column {client_col}. Using first mapping.")
+            if client_col not in client_to_canonical:
+                client_to_canonical[client_col] = []
+            client_to_canonical[client_col].append(canonical_col)
+        
+        # Build the canonical dataframe by copying client columns for each canonical column
+        df_canonical = pd.DataFrame(index=df.index)
+        
+        for canonical_col, client_col in mapping_result.mappings.items():
+            if client_col in df.columns:
+                # Copy the client column data to the canonical column
+                df_canonical[canonical_col] = df[client_col]
+                
+                # Log if this client column maps to multiple canonical columns
+                if len(client_to_canonical[client_col]) > 1:
+                    logger.debug(
+                        f"Client column '{client_col}' mapped to multiple canonical columns: {client_to_canonical[client_col]}. "
+                        f"Duplicating data for all mappings."
+                    )
             else:
-                reverse_mapping[client_col] = canonical_col
+                logger.warning(f"Client column '{client_col}' not found in input data, skipping canonical column '{canonical_col}'")
         
-        # Rename columns (only unique mappings)
-        df_canonical = df.rename(columns=reverse_mapping)
+        # Preserve important unmapped columns identified by the canonicalization agent
+        # These are columns that don't map to canonical columns but contain useful information for classification
+        for col in mapping_result.important_unmapped_columns:
+            if col in df.columns and col not in df_canonical.columns:
+                # Preserve this important unmapped column
+                df_canonical[col] = df[col]
+                logger.debug(f"Preserving important unmapped column: {col}")
         
-        # Handle duplicate mappings: if multiple canonical columns map to same client column,
-        # duplicate the column for each canonical column
-        for canonical_col, client_col in mapping_result.mappings.items():
-            if canonical_col not in df_canonical.columns:
-                # This canonical column maps to a client column that was already renamed
-                # Find which canonical column was used for the rename
-                if client_col in df.columns:
-                    # Client column still exists (wasn't renamed), duplicate it
-                    df_canonical[canonical_col] = df[client_col]
-                else:
-                    # Client column was renamed, find the canonical column it was renamed to
-                    for other_canonical, other_client in mapping_result.mappings.items():
-                        if other_client == client_col and other_canonical in df_canonical.columns:
-                            df_canonical[canonical_col] = df_canonical[other_canonical]
-                            break
-        
-        # Select only the mapped columns
+        # Ensure canonical columns exist (even if empty) for consistency
         canonical_columns = list(mapping_result.mappings.keys())
-        # Only select columns that actually exist
-        existing_columns = [col for col in canonical_columns if col in df_canonical.columns]
-        df_canonical = df_canonical[existing_columns]
+        for canonical_col in canonical_columns:
+            if canonical_col not in df_canonical.columns:
+                # Canonical column doesn't exist - create empty column
+                df_canonical[canonical_col] = None
         
         return df_canonical

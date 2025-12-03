@@ -1,4 +1,7 @@
-"""Database manager for classification results."""
+"""Database manager for classification results.
+
+Simplified for Expert Classifier - only exact match cache.
+"""
 
 import hashlib
 import json
@@ -17,7 +20,11 @@ logger = logging.getLogger(__name__)
 
 
 class ClassificationDBManager:
-    """Manages database operations for classification caching."""
+    """Manages database operations for classification caching.
+    
+    Simplified for Expert Classifier - only exact match cache on
+    (supplier_name + transaction_hash).
+    """
 
     def __init__(self, db_path: Path, echo: bool = False):
         """
@@ -115,38 +122,45 @@ class ClassificationDBManager:
                 return self._to_classification_result(result)
             return None
 
-    def get_by_supplier_and_l1(
-        self, supplier_name: str, l1_category: str, run_id: Optional[str] = None
-    ) -> Optional[ClassificationResult]:
+    def get_supplier_profile(
+        self, supplier_name: str, max_age_days: Optional[int] = None
+    ) -> Optional[Dict]:
         """
-        Get classification by supplier + L1 category.
+        Get the most recent supplier profile for a supplier from previous classifications.
+        
+        This allows reusing supplier profiles across different runs to avoid re-researching.
+        If max_age_days is specified, only return profiles updated within that time window.
+        This allows invalidating stale profiles when research agent logic changes.
 
         Args:
             supplier_name: Supplier name
-            l1_category: L1 category from preliminary classifier
-            run_id: Optional run_id to filter by (if None, searches across all runs)
+            max_age_days: Optional maximum age in days for cached profile. If None, uses any cached profile.
 
         Returns:
-            ClassificationResult if found, None otherwise
+            Supplier profile dict if found and not expired, None otherwise
         """
+        from datetime import datetime, timedelta
+        
         normalized_name = self.normalize_supplier_name(supplier_name)
         with self._get_session() as session:
             query = (
                 session.query(SupplierClassification)
                 .filter(
                     SupplierClassification.supplier_name == normalized_name,
-                    SupplierClassification.l1_category == l1_category,
+                    SupplierClassification.supplier_profile_snapshot.isnot(None)
                 )
             )
-            # Filter by run_id if provided (scoped to current run)
-            if run_id:
-                query = query.filter(SupplierClassification.run_id == run_id)
             
-            result = query.order_by(SupplierClassification.usage_count.desc()).first()
-            if result:
-                # Increment usage count (will be committed by context manager)
-                result.usage_count += 1
-                return self._to_classification_result(result)
+            # If max_age_days is specified, filter by date
+            if max_age_days is not None:
+                cutoff_date = datetime.utcnow() - timedelta(days=max_age_days)
+                query = query.filter(SupplierClassification.updated_at >= cutoff_date)
+            
+            # Get the most recent classification with a supplier profile snapshot
+            result = query.order_by(SupplierClassification.updated_at.desc()).first()
+            
+            if result and result.supplier_profile_snapshot:
+                return result.supplier_profile_snapshot
             return None
 
     def get_supplier_history(
@@ -179,7 +193,6 @@ class ClassificationDBManager:
         self,
         supplier_name: str,
         transaction_hash: Optional[str],
-        l1_category: str,
         classification_result: ClassificationResult,
         run_id: str,
         dataset_name: Optional[str] = None,
@@ -189,15 +202,11 @@ class ClassificationDBManager:
         """
         Store classification result in database.
 
-        Stores at multiple cache levels:
-        1. Exact match entry (supplier + transaction_hash)
-        2. Supplier + L1 entry (for future Supplier + L1 lookups)
-        3. Updates supplier history
+        Simple exact match storage (supplier + transaction_hash).
 
         Args:
             supplier_name: Supplier name
             transaction_hash: Transaction hash (can be None)
-            l1_category: L1 category
             classification_result: ClassificationResult object
             run_id: Run ID (UUID) to identify this run
             dataset_name: Optional dataset name (e.g., "fox", "innova")
@@ -206,6 +215,16 @@ class ClassificationDBManager:
         """
         normalized_name = self.normalize_supplier_name(supplier_name)
         classification_path = self._build_classification_path(classification_result)
+        
+        # Extract confidence from reasoning if present
+        confidence = None
+        if classification_result.reasoning:
+            if 'Confidence: high' in classification_result.reasoning:
+                confidence = 'high'
+            elif 'Confidence: medium' in classification_result.reasoning:
+                confidence = 'medium'
+            elif 'Confidence: low' in classification_result.reasoning:
+                confidence = 'low'
 
         with self._get_session() as session:
             # Check if exact match entry already exists (within same run)
@@ -223,7 +242,6 @@ class ClassificationDBManager:
 
             if existing:
                 # Update existing entry
-                existing.l1_category = l1_category
                 existing.classification_path = classification_path
                 existing.l1 = classification_result.L1
                 existing.l2 = classification_result.L2
@@ -232,6 +250,7 @@ class ClassificationDBManager:
                 existing.l5 = classification_result.L5
                 existing.override_rule_applied = classification_result.override_rule_applied
                 existing.reasoning = classification_result.reasoning
+                existing.confidence = confidence
                 existing.supplier_profile_snapshot = supplier_profile
                 existing.transaction_data_snapshot = transaction_data
                 existing.usage_count += 1
@@ -242,7 +261,6 @@ class ClassificationDBManager:
                     dataset_name=dataset_name,
                     supplier_name=normalized_name,
                     transaction_hash=transaction_hash,
-                    l1_category=l1_category,
                     classification_path=classification_path,
                     l1=classification_result.L1,
                     l2=classification_result.L2,
@@ -251,56 +269,12 @@ class ClassificationDBManager:
                     l5=classification_result.L5,
                     override_rule_applied=classification_result.override_rule_applied,
                     reasoning=classification_result.reasoning,
+                    confidence=confidence,
                     supplier_profile_snapshot=supplier_profile,
                     transaction_data_snapshot=transaction_data,
                     usage_count=1,
                 )
                 session.add(new_entry)
-
-            # Also ensure Supplier + L1 entry exists (for future lookups within same run)
-            supplier_l1_entry = (
-                session.query(SupplierClassification)
-                .filter(
-                    SupplierClassification.run_id == run_id,
-                    SupplierClassification.supplier_name == normalized_name,
-                    SupplierClassification.l1_category == l1_category,
-                    SupplierClassification.transaction_hash.is_(None),  # Supplier+L1 entry has no hash
-                )
-                .first()
-            )
-
-            if not supplier_l1_entry:
-                # Create Supplier + L1 entry (without transaction_hash)
-                supplier_l1_entry = SupplierClassification(
-                    run_id=run_id,
-                    dataset_name=dataset_name,
-                    supplier_name=normalized_name,
-                    transaction_hash=None,
-                    l1_category=l1_category,
-                    classification_path=classification_path,
-                    l1=classification_result.L1,
-                    l2=classification_result.L2,
-                    l3=classification_result.L3,
-                    l4=classification_result.L4,
-                    l5=classification_result.L5,
-                    override_rule_applied=classification_result.override_rule_applied,
-                    reasoning=classification_result.reasoning,
-                    supplier_profile_snapshot=supplier_profile,
-                    transaction_data_snapshot=transaction_data,
-                    usage_count=1,
-                )
-                session.add(supplier_l1_entry)
-            else:
-                # Update existing Supplier + L1 entry
-                supplier_l1_entry.classification_path = classification_path
-                supplier_l1_entry.l1 = classification_result.L1
-                supplier_l1_entry.l2 = classification_result.L2
-                supplier_l1_entry.l3 = classification_result.L3
-                supplier_l1_entry.l4 = classification_result.L4
-                supplier_l1_entry.l5 = classification_result.L5
-                supplier_l1_entry.override_rule_applied = classification_result.override_rule_applied
-                supplier_l1_entry.reasoning = classification_result.reasoning
-                supplier_l1_entry.usage_count += 1
 
     def _to_classification_result(self, db_entry: SupplierClassification) -> ClassificationResult:
         """Convert database entry to ClassificationResult."""
@@ -321,6 +295,69 @@ class ClassificationDBManager:
             if level:
                 parts.append(level)
         return "|".join(parts)
+    
+    def get_successful_examples(
+        self, 
+        taxonomy_path: Optional[str] = None,
+        dataset_name: Optional[str] = None,
+        min_confidence: str = 'high',
+        min_usage_count: int = 2,
+        limit: int = 100
+    ) -> List[Dict]:
+        """
+        Get successful classification examples from database.
+        
+        Successful examples are those with high confidence and validated by multiple uses.
+        
+        Args:
+            taxonomy_path: Optional taxonomy path to filter by (if available in future)
+            dataset_name: Optional dataset name to filter by
+            min_confidence: Minimum confidence level ('high', 'medium', 'low')
+            min_usage_count: Minimum usage count (validated by multiple uses)
+            limit: Maximum number of examples to return
+            
+        Returns:
+            List of dictionaries with example data:
+            {
+                'transaction_data': {...},
+                'supplier_profile': {...},
+                'classification_path': 'L1|L2|L3',
+                'confidence': 'high',
+                'reasoning': '...'
+            }
+        """
+        with self._get_session() as session:
+            query = session.query(SupplierClassification).filter(
+                SupplierClassification.confidence == min_confidence,
+                SupplierClassification.usage_count >= min_usage_count
+            )
+            
+            # Optional filters
+            if dataset_name:
+                query = query.filter(SupplierClassification.dataset_name == dataset_name)
+            
+            # Order by usage_count descending (most validated first)
+            query = query.order_by(SupplierClassification.usage_count.desc())
+            
+            results = query.limit(limit).all()
+            
+            examples = []
+            for entry in results:
+                if entry.transaction_data_snapshot and entry.classification_path:
+                    examples.append({
+                        'transaction_data': entry.transaction_data_snapshot,
+                        'supplier_profile': entry.supplier_profile_snapshot or {},
+                        'classification_path': entry.classification_path,
+                        'confidence': entry.confidence or 'high',
+                        'reasoning': entry.reasoning or '',
+                        'l1': entry.l1,
+                        'l2': entry.l2,
+                        'l3': entry.l3,
+                        'l4': entry.l4,
+                        'l5': entry.l5,
+                    })
+            
+            return examples
     
     def clear_cache(self) -> int:
         """

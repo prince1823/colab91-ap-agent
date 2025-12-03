@@ -20,6 +20,12 @@ class ColumnCanonicalizationSignature(dspy.Signature):
     - Medium: cost centers, dates, PO numbers, supplier address - MAP if available
     - Low: amounts, currency, transaction IDs - MAP if available
     
+    ADDRESS FIELD MAPPING:
+    - Map ONE primary address field to supplier_address (prefer complete addresses over components)
+    - If a complete "Supplier Address" or "Vendor Address" field exists, map it to supplier_address
+    - If only address components exist (Address 1, City, State, etc.), map the most complete field (prefer Address 1/Address over City/State alone)
+    - DO NOT map multiple fields to the same canonical column - map only ONE field per canonical column
+    
     MAPPING RULES:
     ✓ Map: ALL matching fields (especially Critical/High/Medium)
     ✗ Skip: "Mapping Rule", "Flag", system IDs, audit fields, derived indicators
@@ -47,7 +53,10 @@ class ColumnCanonicalizationSignature(dspy.Signature):
         desc="Confidence level: 'high', 'medium', or 'low'"
     )
     unmapped_client_columns: str = dspy.OutputField(
-        desc="JSON array of client columns not mapped (typically irrelevant metadata)"
+        desc="JSON array of client columns not mapped. Split into two categories: 1) Important columns (preserve) - columns that contain useful information for classification even if no canonical match (e.g., project codes, cost centers, transaction categories, department codes, region/territory info, custom classification fields). 2) Unimportant columns (skip) - system/metadata fields, mapping rules, flags, audit fields, derived indicators."
+    )
+    important_unmapped_columns: str = dspy.OutputField(
+        desc="JSON array of important client columns that should be preserved even though they don't map to canonical columns. These are columns with potentially useful information for classification (e.g., project codes, cost centers, transaction categories, department codes, region/territory info, custom classification fields, business unit codes). Exclude system/metadata fields."
     )
     unmapped_canonical_columns: str = dspy.OutputField(
         desc="JSON array of canonical columns not found in client data"
