@@ -1,8 +1,15 @@
-"""Spend classification agent."""
+"""Spend classification agent using dspy.ChainOfThought (single-shot) with semantic pre-search."""
 
-# Backward compatibility - re-export from new locations
-from core.agents.spend_classification.l1 import L1Classifier
-from core.agents.spend_classification.full import SpendClassifier, ClassificationValidator
+from core.agents.spend_classification.agent import ExpertClassifier
+from core.agents.spend_classification.signature import SpendClassificationSignature
+from core.agents.spend_classification.tools import validate_path, lookup_paths, get_l1_categories
 from core.agents.spend_classification.model import ClassificationResult
 
-__all__ = ["SpendClassifier", "ClassificationResult", "ClassificationValidator", "L1Classifier"]
+__all__ = [
+    "ExpertClassifier",
+    "SpendClassificationSignature",
+    "ClassificationResult",
+    "validate_path",
+    "lookup_paths",
+    "get_l1_categories",
+]

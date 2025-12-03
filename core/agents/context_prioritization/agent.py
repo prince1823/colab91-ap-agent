@@ -131,7 +131,6 @@ class ContextPrioritizationAgent:
         transaction_data: Dict[str, Any],
         supplier_name: Optional[str] = None,
         supplier_profile: Optional[Dict[str, Any]] = None,
-        l1_result: Optional[Dict[str, str]] = None,
     ) -> PrioritizationDecision:
         """
         Assess transaction data quality and supplier context strength, make research and prioritization decisions.
@@ -140,7 +139,6 @@ class ContextPrioritizationAgent:
             transaction_data: Transaction data dictionary
             supplier_name: Optional supplier name
             supplier_profile: Optional supplier profile dict
-            l1_result: Optional L1 classification result with 'confidence' and 'L1' keys
             
         Returns:
             PrioritizationDecision with assessments and decisions
@@ -162,43 +160,16 @@ class ContextPrioritizationAgent:
                 reasoning="Transaction data is completely missing, research needed"
             )
         
-        # Fast path: L1 confidence is low and no supplier profile
-        if not supplier_profile and l1_result and l1_result.get('confidence', '').lower() == 'low':
-            return PrioritizationDecision(
-                should_research=True,
-                prioritization_strategy="n/a",
-                supplier_context_strength="none",
-                transaction_data_quality="sparse",
-                reasoning="L1 confidence is low, research needed"
-            )
-        
-        # Fast path: L1 is catch-all with low confidence and no supplier profile
-        if not supplier_profile and l1_result:
-            l1_category = l1_result.get('L1', '').lower()
-            if l1_category in ['non-sourceable', 'non_sourceable', 'exempt', 'exceptions']:
-                if l1_result.get('confidence', '').lower() != 'high':
-                    return PrioritizationDecision(
-                        should_research=True,
-                        prioritization_strategy="n/a",
-                        supplier_context_strength="none",
-                        transaction_data_quality="sparse",
-                        reasoning=f"L1 is catch-all '{l1_category}' with low confidence, research needed"
-                    )
-        
         # For other cases, use LLM to make semantic decision
         formatted_transaction = self._format_transaction_data(transaction_data)
         supplier_name_str = supplier_name or 'None'
         supplier_profile_str = self._format_supplier_profile(supplier_profile)
-        l1_category = l1_result.get('L1', 'unknown') if l1_result else 'unknown'
-        l1_confidence = l1_result.get('confidence', 'unknown') if l1_result else 'unknown'
         
         try:
             result = self.decision_agent(
                 transaction_data=formatted_transaction,
                 supplier_name=supplier_name_str,
                 supplier_profile=supplier_profile_str,
-                l1_category=l1_category,
-                l1_confidence=l1_confidence
             )
             
             should_research = result.should_research.lower().strip() == 'yes' if result.should_research.lower().strip() != 'n/a' else False
@@ -212,13 +183,21 @@ class ContextPrioritizationAgent:
             )
         except Exception as e:
             logger.warning(f"Context prioritization LLM call failed: {e}")
-            # Fallback: conservative decisions
+            # Fallback: Default to transaction_primary unless transaction data is sparse/accounting reference
             is_accounting_ref = self._detect_accounting_reference(transaction_data)
             transaction_quality = "accounting_reference" if is_accounting_ref else ("sparse" if not (has_line_desc and has_gl_desc) else "rich")
             
+            # NEW DEFAULT: transaction_primary unless transaction data is truly unusable
+            if transaction_quality in ["sparse", "accounting_reference"] and supplier_profile:
+                priority_strategy = "supplier_primary" if transaction_quality == "accounting_reference" else "supplier_primary"
+            elif transaction_quality == "rich":
+                priority_strategy = "transaction_primary"
+            else:
+                priority_strategy = "transaction_primary"  # Default to transaction even if not perfect
+            
             return PrioritizationDecision(
                 should_research=not (has_line_desc and has_gl_desc) if not supplier_profile else False,
-                prioritization_strategy="supplier_primary" if supplier_profile and transaction_quality in ["sparse", "accounting_reference"] else ("transaction_primary" if transaction_quality == "rich" else "balanced"),
+                prioritization_strategy=priority_strategy,
                 supplier_context_strength="strong" if supplier_profile else "none",
                 transaction_data_quality=transaction_quality,
                 reasoning=f"Fallback decision after LLM error: {str(e)}"

@@ -95,6 +95,12 @@ class AppConfig(BaseSettings):
     enable_classification_cache: bool = Field(
         default=False, alias="ENABLE_CLASSIFICATION_CACHE"
     )
+    supplier_cache_max_age_days: Optional[int] = Field(
+        default=None, alias="SUPPLIER_CACHE_MAX_AGE_DAYS"
+    )
+    """Maximum age in days for cached supplier profiles. If None, uses any cached profile.
+    Set this to a value (e.g., 7) to invalidate stale profiles after research agent changes.
+    """
 
     # Per-Agent LLM Selection
     column_canonicalization_llm: str = Field(

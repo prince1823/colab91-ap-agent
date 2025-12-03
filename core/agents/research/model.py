@@ -17,7 +17,6 @@ class SupplierProfile:
     parent_company: Optional[str]
     confidence: str  # high, medium, low
     supplier_address: Optional[str] = None  # Optional supplier address/location
-    is_person: bool = False  # Whether supplier is an individual person
     is_large_company: bool = False  # Whether company is very large (may confuse LLM)
     company_size: Optional[str] = None  # small, medium, large, enterprise
     
@@ -43,7 +42,6 @@ class SupplierProfile:
             "parent_company": self.parent_company,
             "confidence": self.confidence,
             "supplier_address": self.supplier_address,
-            "is_person": self.is_person,
             "is_large_company": self.is_large_company,
             "company_size": self.company_size,
             "service_type": self.service_type,
