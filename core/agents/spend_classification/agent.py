@@ -13,6 +13,7 @@ from core.agents.context_prioritization.model import PrioritizationDecision
 from core.agents.spend_classification.model import ClassificationResult
 from core.agents.spend_classification.signature import SpendClassificationSignature
 from core.agents.spend_classification.tools import validate_path, lookup_paths, get_l1_categories
+from core.agents.taxonomy_rag import TaxonomyRetriever
 from core.llms.llm import get_llm_for_agent
 from core.utils.mlflow import setup_mlflow_tracing
 from core.utils.transaction_utils import is_valid_value
@@ -47,6 +48,7 @@ class ExpertClassifier:
         self.db_manager = None  # Will be set by pipeline for BootstrapFewShot examples
         self._max_examples = 2  # Maximum number of examples to include (conservative to minimize tokens)
         self._enable_examples = True  # Enabled - improves accuracy
+        self._taxonomy_retriever = TaxonomyRetriever()  # RAG component for taxonomy retrieval
 
 
     def load_taxonomy(self, taxonomy_path: Union[str, Path]) -> Dict:
@@ -163,121 +165,89 @@ class ExpertClassifier:
                     display_value = display_value[:147] + "..."
                 parts.append(f"  {label}: {display_value}")
         
+        # Add field completeness summary (contextual, not hardcoded patterns)
+        if parts:
+            field_counts = {
+                'structured': len(structured_fields),
+                'descriptions': len(description_fields),
+                'references': len(reference_fields),
+                'other': len(other_fields)
+            }
+            
+            # Only show if there are fields available
+            if any(field_counts.values()):
+                parts.append("")
+                available_info = []
+                if field_counts['structured'] > 0:
+                    available_info.append(f"{field_counts['structured']} structured field(s)")
+                if field_counts['descriptions'] > 0:
+                    available_info.append(f"{field_counts['descriptions']} description field(s)")
+                if field_counts['references'] > 0:
+                    available_info.append(f"{field_counts['references']} reference field(s)")
+                if field_counts['other'] > 0:
+                    available_info.append(f"{field_counts['other']} other field(s)")
+                
+                parts.append(f"Data Completeness: {', '.join(available_info)} available")
+                parts.append("(Evaluate which fields provide the most relevant signals for this transaction)")
+        
         return "\n".join(parts) if parts else "No transaction details available"
 
-    def _get_relevant_taxonomy_paths(self, transaction_data: Dict, supplier_profile: Dict, taxonomy_list: List[str]) -> Dict[str, List[str]]:
+    def _get_relevant_taxonomy_paths(
+        self, 
+        transaction_data: Dict, 
+        supplier_profile: Dict, 
+        taxonomy_list: List[str]
+    ) -> Tuple[Dict[str, List[str]], Dict[str, float]]:
         """
-        Use semantic search to find relevant taxonomy paths based on transaction and supplier data.
-        Prioritizes STRONG signals first (supplier profile, department, GL code) over weak signals (descriptions).
-        Groups paths by L1 category for better hierarchical organization.
+        Use RAG component (FAISS + hybrid search) to find relevant taxonomy paths.
+        
+        Uses the TaxonomyRetriever with:
+        - Keyword similarity (fast, exact matches)
+        - Semantic similarity via FAISS (flexible, contextual matches)
+        - Includes all transaction fields (including GL/Line descriptions)
+        - Increased sample size for better context
         
         Returns:
-            Dictionary mapping L1 category to list of paths within that L1
+            Tuple of:
+            - Dictionary mapping L1 category to list of paths within that L1
+            - Dictionary mapping path to similarity score (0-1)
         """
-        search_queries = []
+        # Use the new RAG component for hybrid search with increased sample size
+        grouped_paths = self._taxonomy_retriever.retrieve_grouped_by_l1(
+            transaction_data=transaction_data,
+            supplier_profile=supplier_profile,
+            taxonomy_list=taxonomy_list,
+            max_l1_categories=6,      # Increased from 5
+            max_paths_per_l1=10,      # Increased from 8
+            max_total_paths=60        # Increased from 35 to 50-60 range
+        )
         
-        # STRONG SIGNALS FIRST (priority order)
-        # 1. Supplier profile (PRIMARY)
-        if supplier_profile:
-            if supplier_profile.get('products_services'):
-                search_queries.append(str(supplier_profile['products_services']))
-            if supplier_profile.get('service_type'):
-                search_queries.append(str(supplier_profile['service_type']))
-            if supplier_profile.get('industry'):
-                search_queries.append(str(supplier_profile['industry']))
+        # Get individual path scores for all retrieved paths
+        all_results = self._taxonomy_retriever.retrieve_with_scores(
+            transaction_data=transaction_data,
+            supplier_profile=supplier_profile,
+            taxonomy_list=taxonomy_list,
+            top_k=60,  # Get more for score extraction (increased from 50)
+            min_score=0.05  # Lower threshold to get more results
+        )
         
-        # 2. Department/Business Unit (HIGH signal)
-        if is_valid_value(transaction_data.get('department')):
-            search_queries.append(str(transaction_data['department']))
+        # Build scores dictionary
+        scores_dict = {r.path: r.combined_score for r in all_results}
         
-        # 3. GL Code (HIGH signal - structured codes)
-        if is_valid_value(transaction_data.get('gl_code')):
-            search_queries.append(str(transaction_data['gl_code']))
-        
-        # 4. Cost Center (organizational context)
-        if is_valid_value(transaction_data.get('cost_center')):
-            search_queries.append(str(transaction_data['cost_center']))
-        
-        # WEAK SIGNALS LAST (only if we need more queries)
-        if len(search_queries) < 3:
-            if is_valid_value(transaction_data.get('line_description')):
-                search_queries.append(str(transaction_data['line_description']))
-            if is_valid_value(transaction_data.get('gl_description')):
-                search_queries.append(str(transaction_data['gl_description']))
-        
-        # Use semantic search to find relevant paths for each query
-        # Collect all matches with their scores
-        all_paths_with_scores: Dict[str, float] = {}  # path -> max_score
-        
-        for query in search_queries[:3]:  # Use top 3 queries for better coverage
-            matches = lookup_paths(query, taxonomy_list)
-            # Store paths, assigning higher scores to earlier matches (they're already sorted by relevance)
-            for idx, path in enumerate(matches[:8]):  # Top 8 matches per query
-                score = 10.0 - idx  # Higher score for better matches
-                if path not in all_paths_with_scores or score > all_paths_with_scores[path]:
-                    all_paths_with_scores[path] = score
-        
-        # Group paths by L1 category
-        l1_groups: Dict[str, List[Tuple[float, str]]] = {}  # l1 -> [(score, path), ...]
-        
-        for path, score in all_paths_with_scores.items():
-            l1 = path.split("|")[0] if "|" in path else path
-            if l1 not in l1_groups:
-                l1_groups[l1] = []
-            # Boost score for deeper paths (more specific)
-            depth = len(path.split("|"))
-            adjusted_score = score + (depth * 0.5)
-            l1_groups[l1].append((adjusted_score, path))
-        
-        # Sort paths within each L1 by score (descending), then by depth
-        for l1 in l1_groups:
-            l1_groups[l1].sort(key=lambda x: (-x[0], -len(x[1].split("|"))))
-        
-        # Select top 3-4 L1 categories (by number of matches and highest scores)
-        l1_scores = []
-        for l1, paths in l1_groups.items():
-            # Score L1 by: max individual path score + number of paths
-            max_path_score = max(score for score, _ in paths) if paths else 0
-            num_paths = len(paths)
-            l1_score = max_path_score + (num_paths * 0.3)
-            l1_scores.append((l1_score, l1))
-        
-        l1_scores.sort(key=lambda x: -x[0])  # Sort descending by score
-        top_l1s = [l1 for _, l1 in l1_scores[:4]]  # Top 4 L1 categories
-        
-        # Build result: top L1s with their top paths
-        result: Dict[str, List[str]] = {}
-        total_paths = 0
-        
-        for l1 in top_l1s:
-            paths_with_scores = l1_groups[l1]
-            # Take top 3-5 paths per L1, but limit total to 20
-            paths_to_take = min(5, 20 - total_paths) if total_paths < 20 else 0
-            if paths_to_take > 0:
-                result[l1] = [path for _, path in paths_with_scores[:paths_to_take]]
-                total_paths += len(result[l1])
-        
-        # If we have space, add paths from other L1s
-        if total_paths < 20:
-            for l1, paths_with_scores in l1_groups.items():
-                if l1 not in result:
-                    remaining = 20 - total_paths
-                    if remaining > 0:
-                        result[l1] = [path for _, path in paths_with_scores[:min(3, remaining)]]
-                        total_paths += len(result[l1])
-                        if total_paths >= 20:
-                            break
-        
-        return result
+        return grouped_paths, scores_dict
     
-    def _format_taxonomy_sample_by_l1(self, l1_grouped_paths: Dict[str, List[str]]) -> str:
+    def _format_taxonomy_sample_by_l1(
+        self, 
+        l1_grouped_paths: Dict[str, List[str]],
+        similarity_scores: Optional[Dict[str, float]] = None
+    ) -> str:
         """
         Format taxonomy paths sorted by depth (deepest first) to encourage bottom-up matching.
-        The L1-grouping logic in selection improves which paths are chosen,
-        but we present them sorted by depth to encourage matching from most specific to least.
+        Optionally includes similarity scores from RAG retrieval (contextual signal, not hardcoded).
         
         Args:
             l1_grouped_paths: Dictionary mapping L1 category to list of paths
+            similarity_scores: Optional dictionary mapping path to similarity score (0-1)
             
         Returns:
             Formatted string with paths sorted by depth (deepest first)
@@ -291,9 +261,30 @@ class ExpertClassifier:
             flat_paths.extend(paths)
         
         # Sort by depth descending (most specific/deepest paths first) for bottom-up matching
-        flat_paths.sort(key=lambda p: (-len(p.split("|")), p))
+        # If scores available, also sort by score (higher first)
+        if similarity_scores:
+            flat_paths.sort(key=lambda p: (
+                -len(p.split("|")),  # Depth first (deeper = more specific)
+                -similarity_scores.get(p, 0.0),  # Then by similarity score
+                p  # Then alphabetically
+            ))
+        else:
+            flat_paths.sort(key=lambda p: (-len(p.split("|")), p))
         
-        return "Relevant taxonomy paths (deepest/most specific paths first - match these end nodes first):\n" + "\n".join(flat_paths)
+        # Format paths with scores if available
+        formatted_lines = ["Relevant taxonomy paths (deepest/most specific paths first - match these end nodes first):"]
+        for path in flat_paths:
+            depth = len(path.split("|"))
+            if similarity_scores and path in similarity_scores:
+                score = similarity_scores[path]
+                formatted_lines.append(f"L{depth} [{score:.2f}]: {path}")
+            else:
+                formatted_lines.append(f"L{depth}: {path}")
+        
+        if similarity_scores:
+            formatted_lines.append("\n(Similarity scores indicate RAG retrieval confidence - use as one signal among many when making your classification decision.)")
+        
+        return "\n".join(formatted_lines)
     
     def _extract_domain_context(
         self, 
@@ -558,11 +549,11 @@ class ExpertClassifier:
         supplier_info = self._format_supplier_info(supplier_profile)
         transaction_info = self._format_transaction_info(transaction_data)
         
-        # Use semantic search to find top relevant paths, grouped by L1
-        l1_grouped_paths = self._get_relevant_taxonomy_paths(transaction_data, supplier_profile, taxonomy_list)
+        # Use semantic search to find top relevant paths, grouped by L1, with similarity scores
+        l1_grouped_paths, similarity_scores = self._get_relevant_taxonomy_paths(transaction_data, supplier_profile, taxonomy_list)
         
-        # Format taxonomy paths organized by L1 for better LLM reasoning
-        taxonomy_sample = self._format_taxonomy_sample_by_l1(l1_grouped_paths)
+        # Format taxonomy paths organized by L1 for better LLM reasoning, with similarity scores
+        taxonomy_sample = self._format_taxonomy_sample_by_l1(l1_grouped_paths, similarity_scores)
         
         # Also create flat list for pre-search tracking
         flat_paths = []

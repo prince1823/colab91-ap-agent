@@ -54,7 +54,9 @@ class SpendClassificationPipeline:
         self.taxonomy_path = taxonomy_path
         self.canonicalization_agent = ColumnCanonicalizationAgent(enable_tracing=enable_tracing)
         self.research_agent = ResearchAgent(enable_tracing=enable_tracing)
-        self.context_prioritization_agent = ContextPrioritizationAgent(enable_tracing=enable_tracing)
+        self.context_prioritization_agent = ContextPrioritizationAgent(
+            taxonomy_path=taxonomy_path, enable_tracing=enable_tracing
+        )
         self.expert_classifier = ExpertClassifier(
             taxonomy_path=taxonomy_path, enable_tracing=enable_tracing
         )

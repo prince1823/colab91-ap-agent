@@ -22,19 +22,27 @@ class SpendClassificationSignature(dspy.Signature):
       specific product/service descriptions.
     
     PROCESS (Contextual Bottom-Up):
-    1. Review all available signals and contextual patterns (tax/VAT, payment processing, etc.)
-    2. Start from specific taxonomy paths (deepest/most specific) and work backward to L1
+    1. Review all available signals contextually - assess field completeness and data quality
+       - Note which fields are available (structured fields, descriptions, references)
+       - Evaluate the specificity and relevance of each field for THIS transaction
+       - Identify patterns you observe in the data (without hardcoded rules)
+    
+    2. Examine taxonomy paths starting from deepest/most specific levels (L5/L4) and work backward to L1
+       - Similarity scores (if shown) indicate RAG retrieval confidence - use as one signal
+       - Focus on matching the END of taxonomy paths (leaf nodes) first
+       - Consider the full hierarchy when multiple paths seem similar
+       - Understand category boundaries by examining the taxonomy structure itself
+    
     3. Match transaction context to taxonomy paths - use ALL signals that seem relevant
-    4. For each transaction, reason about which signals are most trustworthy for THIS case:
-       - If supplier profile clearly matches transaction → use it
-       - If department/GL code align → use them
-       - If descriptions are specific → use them
-       - If patterns suggest special category (tax, payment processing) → consider that context
-    5. Consider signal reliability:
-       - Specific descriptions > Generic descriptions
-       - Supplier's primary service > Supplier's industry (when transaction-specific)
-       - Clear patterns (tax/VAT) > Ambiguous signals
-       - Transaction-specific signals > Generic organizational context
+       - For each transaction, reason about which signals are most trustworthy for THIS specific case
+       - Consider: Does supplier profile match the transaction? Are descriptions specific or generic?
+       - Consider: Do patterns suggest special categories (tax, payment processing) that might override other signals?
+    
+    4. Contextual signal reliability assessment:
+       - Specific, detailed information > Generic, vague information (regardless of field type)
+       - Transaction-specific signals > Generic organizational context (when transaction is clear)
+       - Clear, unambiguous patterns > Ambiguous, conflicting signals
+       - Evaluate signal relevance dynamically - what matters most for THIS transaction?
     
     USE TRANSACTION AMOUNT FOR PATTERNS:
     - Large one-time amounts (>$50k) → Capital equipment, major services, construction, infrastructure
@@ -65,12 +73,19 @@ class SpendClassificationSignature(dspy.Signature):
     - Accounting codes: "accounts payable" or "accrued invoices" are accounting processes, not categories.
       However, descriptions WITHIN those codes might be useful.
     
+    EDGE CASE HANDLING (Contextual):
+    - Zero or very small amounts: Evaluate if this is an adjustment, refund, or actual purchase based on context
+    - Missing/blank descriptions: Rely more on structured fields (department, GL code, supplier profile) if available
+    - Generic accounting references: May indicate processing entries rather than spend categories - evaluate contextually
+    - Supplier profile mismatch: If supplier typically provides X but transaction suggests Y, prioritize transaction context
+    
     GENERAL RULES:
     - NEVER return just L1 - must have L1|L2|L3 minimum
     - Prefer specific categories over "Other" when confident
     - Distinguish consumption expenses (meals, services consumed) from operational purchases
     - Consider context: What matters most for THIS transaction given all available signals?
     - Patterns in descriptions (tax, payment processing) are contextual clues - evaluate their relevance
+    - Field completeness matters - use available fields contextually based on their quality and specificity
     """
     
     supplier_info: str = dspy.InputField(
