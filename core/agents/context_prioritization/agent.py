@@ -245,6 +245,7 @@ class ContextPrioritizationAgent:
         try:
             taxonomy_data = self.load_taxonomy(taxonomy_path)
             taxonomy_list = taxonomy_data.get('taxonomy', [])
+            descriptions = taxonomy_data.get('taxonomy_descriptions', {})  # Extract descriptions
             
             if not taxonomy_list:
                 return None
@@ -254,7 +255,8 @@ class ContextPrioritizationAgent:
                 transaction_data=transaction_data,
                 supplier_profile=supplier_profile,
                 taxonomy_list=taxonomy_list,
-                top_n=3
+                top_n=3,
+                descriptions=descriptions
             )
             
             return confidence

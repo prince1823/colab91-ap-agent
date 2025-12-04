@@ -103,18 +103,29 @@ class TaxonomyRetriever:
         
         return self._embedding_model
     
-    def _get_taxonomy_cache_key(self, taxonomy_list: List[str]) -> str:
-        """Generate cache key for taxonomy list."""
+    def _get_taxonomy_cache_key(self, taxonomy_list: List[str], descriptions: Optional[Dict[str, str]] = None) -> str:
+        """Generate cache key for taxonomy list and descriptions."""
         # Use sorted taxonomy to create stable hash
         taxonomy_str = "|".join(sorted(taxonomy_list))
-        return hashlib.md5(taxonomy_str.encode()).hexdigest()
+        # Include descriptions in cache key if provided
+        if descriptions:
+            desc_str = "|".join(sorted(f"{k}:{v}" for k, v in descriptions.items()))
+            cache_input = f"{taxonomy_str}||{desc_str}"
+        else:
+            cache_input = taxonomy_str
+        return hashlib.md5(cache_input.encode()).hexdigest()
     
-    def _build_faiss_index(self, taxonomy_list: List[str]) -> Tuple[faiss.Index, np.ndarray]:
+    def _build_faiss_index(
+        self, 
+        taxonomy_list: List[str],
+        descriptions: Optional[Dict[str, str]] = None
+    ) -> Tuple[faiss.Index, np.ndarray]:
         """
         Build FAISS index for taxonomy embeddings.
         
         Args:
             taxonomy_list: List of taxonomy paths
+            descriptions: Optional dictionary mapping paths to descriptions
             
         Returns:
             Tuple of (FAISS index, embeddings array)
@@ -125,8 +136,20 @@ class TaxonomyRetriever:
             return None, None
         
         try:
-            # Generate embeddings
-            embeddings = model.encode(taxonomy_list, convert_to_numpy=True, show_progress_bar=False)
+            # Build enriched text for embedding: combine path with description if available
+            texts_to_embed = []
+            for path in taxonomy_list:
+                if descriptions and path in descriptions:
+                    # Combine path with description for richer semantic meaning
+                    description = descriptions[path].strip()
+                    enriched = f"{path} - {description}"
+                else:
+                    # Fallback to path only if no description available
+                    enriched = path
+                texts_to_embed.append(enriched)
+            
+            # Generate embeddings from enriched text
+            embeddings = model.encode(texts_to_embed, convert_to_numpy=True, show_progress_bar=False)
             embeddings = embeddings.astype('float32')
             
             # Normalize embeddings for cosine similarity
@@ -139,22 +162,26 @@ class TaxonomyRetriever:
             # Add embeddings to index
             index.add(embeddings)
             
-            logger.debug(f"Built FAISS index for {len(taxonomy_list)} taxonomy paths")
+            logger.debug(f"Built FAISS index for {len(taxonomy_list)} taxonomy paths (with descriptions: {descriptions is not None})")
             return index, embeddings
         
         except Exception as e:
             logger.error(f"Failed to build FAISS index: {e}")
             return None, None
     
-    def _get_or_build_index(self, taxonomy_list: List[str]) -> Tuple[Optional[faiss.Index], Optional[np.ndarray]]:
+    def _get_or_build_index(
+        self, 
+        taxonomy_list: List[str],
+        descriptions: Optional[Dict[str, str]] = None
+    ) -> Tuple[Optional[faiss.Index], Optional[np.ndarray]]:
         """Get or build FAISS index for taxonomy (cached)."""
-        cache_key = self._get_taxonomy_cache_key(taxonomy_list)
+        cache_key = self._get_taxonomy_cache_key(taxonomy_list, descriptions)
         
         if cache_key in self._index_cache:
             return self._index_cache[cache_key]
         
         # Build new index
-        index, embeddings = self._build_faiss_index(taxonomy_list)
+        index, embeddings = self._build_faiss_index(taxonomy_list, descriptions)
         
         if index is not None:
             self._index_cache[cache_key] = (index, embeddings)
@@ -204,7 +231,8 @@ class TaxonomyRetriever:
         self,
         query: str,
         taxonomy_list: List[str],
-        top_k: int = 20
+        top_k: int = 20,
+        descriptions: Optional[Dict[str, str]] = None
     ) -> List[Tuple[float, str]]:
         """
         Perform semantic search using FAISS vector database.
@@ -213,6 +241,7 @@ class TaxonomyRetriever:
             query: Search query text
             taxonomy_list: List of taxonomy paths to search
             top_k: Number of top results to return
+            descriptions: Optional dictionary mapping paths to descriptions
             
         Returns:
             List of (similarity_score, path) tuples sorted by similarity
@@ -223,7 +252,7 @@ class TaxonomyRetriever:
         
         try:
             # Get or build FAISS index
-            index, embeddings = self._get_or_build_index(taxonomy_list)
+            index, embeddings = self._get_or_build_index(taxonomy_list, descriptions)
             if index is None:
                 return []
             
@@ -404,7 +433,8 @@ class TaxonomyRetriever:
         top_k: int = 20,
         keyword_weight: float = 0.4,
         semantic_weight: float = 0.6,
-        min_score: float = 0.05  # Lower threshold to get more results
+        min_score: float = 0.05,  # Lower threshold to get more results
+        descriptions: Optional[Dict[str, str]] = None
     ) -> List[RetrievalResult]:
         """
         Retrieve taxonomy paths with similarity scores using hybrid search with multi-query RAG.
@@ -417,6 +447,7 @@ class TaxonomyRetriever:
             keyword_weight: Weight for keyword similarity (0-1)
             semantic_weight: Weight for semantic similarity (0-1)
             min_score: Minimum combined score threshold (lowered to get more results)
+            descriptions: Optional dictionary mapping taxonomy paths to descriptions
             
         Returns:
             List of RetrievalResult objects sorted by combined_score (descending)
@@ -447,7 +478,8 @@ class TaxonomyRetriever:
             var_results = self._semantic_search_faiss(
                 query_var,
                 taxonomy_list,
-                top_k=initial_top_k
+                top_k=initial_top_k,
+                descriptions=descriptions
             )
             
             # Aggregate scores: if path appears in multiple queries, keep max score
@@ -532,7 +564,8 @@ class TaxonomyRetriever:
         transaction_data: Dict,
         supplier_profile: Optional[Dict],
         taxonomy_list: List[str],
-        top_n: int = 3
+        top_n: int = 3,
+        descriptions: Optional[Dict[str, str]] = None
     ) -> float:
         """
         Get overall confidence score (0-1) for how well transaction matches taxonomy.
@@ -544,6 +577,7 @@ class TaxonomyRetriever:
             supplier_profile: Optional supplier profile dictionary
             taxonomy_list: List of taxonomy paths
             top_n: Number of top results to consider for confidence
+            descriptions: Optional dictionary mapping taxonomy paths to descriptions
             
         Returns:
             Float 0-1: Higher = better match
@@ -553,7 +587,8 @@ class TaxonomyRetriever:
             supplier_profile,
             taxonomy_list,
             top_k=top_n,
-            min_score=0.0
+            min_score=0.0,
+            descriptions=descriptions
         )
         
         if not results:
@@ -577,7 +612,8 @@ class TaxonomyRetriever:
         taxonomy_list: List[str],
         max_l1_categories: int = 6,
         max_paths_per_l1: int = 10,
-        max_total_paths: int = 60
+        max_total_paths: int = 60,
+        descriptions: Optional[Dict[str, str]] = None
     ) -> Dict[str, List[str]]:
         """
         Retrieve taxonomy paths grouped by L1 category.
@@ -591,6 +627,7 @@ class TaxonomyRetriever:
             max_l1_categories: Maximum number of L1 categories to return
             max_paths_per_l1: Maximum paths per L1 category
             max_total_paths: Maximum total paths across all L1s
+            descriptions: Optional dictionary mapping taxonomy paths to descriptions
             
         Returns:
             Dictionary mapping L1 category to list of paths
@@ -600,7 +637,8 @@ class TaxonomyRetriever:
             supplier_profile,
             taxonomy_list,
             top_k=max_total_paths * 2,  # Get more for filtering
-            min_score=0.05  # Lower threshold to get more results
+            min_score=0.05,  # Lower threshold to get more results
+            descriptions=descriptions
         )
         
         # Group by L1

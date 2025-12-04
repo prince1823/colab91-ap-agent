@@ -23,11 +23,13 @@ from core.agents.column_canonicalization import ColumnCanonicalizationAgent
 from core.utils.transaction_utils import is_valid_value
 
 
-def load_taxonomy(taxonomy_path: Path) -> List[str]:
-    """Load taxonomy paths from YAML file."""
+def load_taxonomy(taxonomy_path: Path) -> Tuple[List[str], Dict[str, str]]:
+    """Load taxonomy paths and descriptions from YAML file."""
     with open(taxonomy_path, 'r') as f:
         data = yaml.safe_load(f)
-    return data.get('taxonomy', [])
+    taxonomy_list = data.get('taxonomy', [])
+    descriptions = data.get('taxonomy_descriptions', {})
+    return taxonomy_list, descriptions
 
 
 def analyze_rag_retrieval(
@@ -35,35 +37,26 @@ def analyze_rag_retrieval(
     supplier_profile: Dict,
     taxonomy_list: List[str],
     expected_path: str,
-    retriever: TaxonomyRetriever
+    retriever: TaxonomyRetriever,
+    descriptions: Optional[Dict[str, str]] = None
 ) -> Dict:
     """Analyze RAG retrieval for a single transaction."""
     
     try:
-        # Get initial retrieval (before reranking)
+        # Get initial retrieval
         initial_results = retriever.retrieve_with_scores(
             transaction_data=transaction_data,
             supplier_profile=supplier_profile,
             taxonomy_list=taxonomy_list,
             top_k=50,
-            use_reranking=False  # Get results BEFORE reranking
+            descriptions=descriptions
         )
     except Exception as e:
         print(f"      ⚠️  Error in initial retrieval: {e}")
         initial_results = []
     
-    try:
-        # Get reranked results
-        reranked_results = retriever.retrieve_with_scores(
-            transaction_data=transaction_data,
-            supplier_profile=supplier_profile,
-            taxonomy_list=taxonomy_list,
-            top_k=50,
-            use_reranking=True  # Get results AFTER reranking
-        )
-    except Exception as e:
-        print(f"      ⚠️  Error in reranked retrieval: {e}")
-        reranked_results = []
+    # For now, reranked results are the same as initial (reranking not implemented)
+    reranked_results = initial_results
     
     # Check if expected path is in retrieved results
     initial_paths = [r.path for r in initial_results]
@@ -162,7 +155,7 @@ def diagnose_benchmark(benchmark_name: str, dataset: Optional[str] = None, max_r
         # Load data
         df_input = pd.read_csv(input_csv)
         df_output = pd.read_csv(output_csv)
-        taxonomy_list = load_taxonomy(taxonomy_yaml)
+        taxonomy_list, descriptions = load_taxonomy(taxonomy_yaml)
         
         # Canonicalize the input data (required for RAG retriever)
         try:
@@ -219,7 +212,8 @@ def diagnose_benchmark(benchmark_name: str, dataset: Optional[str] = None, max_r
                     supplier_profile=supplier_profile,
                     taxonomy_list=taxonomy_list,
                     expected_path=expected_path,
-                    retriever=retriever
+                    retriever=retriever,
+                    descriptions=descriptions
                 )
             except Exception as e:
                 print(f"   ⚠️  ERROR in RAG analysis: {e}")
