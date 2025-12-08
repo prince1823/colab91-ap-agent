@@ -254,11 +254,3 @@ def lookup_paths(query: str, taxonomy: List[str]) -> List[str]:
     return [m[2] for m in scored_matches[:15]]
 
 
-def get_l1_categories(taxonomy: List[str]) -> List[str]:
-    """Get all unique L1 categories from taxonomy."""
-    l1s = set()
-    for path in taxonomy:
-        parts = path.split("|")
-        if parts:
-            l1s.add(parts[0])
-    return sorted(list(l1s))

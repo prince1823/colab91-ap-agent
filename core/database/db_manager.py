@@ -296,69 +296,6 @@ class ClassificationDBManager:
                 parts.append(level)
         return "|".join(parts)
     
-    def get_successful_examples(
-        self, 
-        taxonomy_path: Optional[str] = None,
-        dataset_name: Optional[str] = None,
-        min_confidence: str = 'high',
-        min_usage_count: int = 2,
-        limit: int = 100
-    ) -> List[Dict]:
-        """
-        Get successful classification examples from database.
-        
-        Successful examples are those with high confidence and validated by multiple uses.
-        
-        Args:
-            taxonomy_path: Optional taxonomy path to filter by (if available in future)
-            dataset_name: Optional dataset name to filter by
-            min_confidence: Minimum confidence level ('high', 'medium', 'low')
-            min_usage_count: Minimum usage count (validated by multiple uses)
-            limit: Maximum number of examples to return
-            
-        Returns:
-            List of dictionaries with example data:
-            {
-                'transaction_data': {...},
-                'supplier_profile': {...},
-                'classification_path': 'L1|L2|L3',
-                'confidence': 'high',
-                'reasoning': '...'
-            }
-        """
-        with self._get_session() as session:
-            query = session.query(SupplierClassification).filter(
-                SupplierClassification.confidence == min_confidence,
-                SupplierClassification.usage_count >= min_usage_count
-            )
-            
-            # Optional filters
-            if dataset_name:
-                query = query.filter(SupplierClassification.dataset_name == dataset_name)
-            
-            # Order by usage_count descending (most validated first)
-            query = query.order_by(SupplierClassification.usage_count.desc())
-            
-            results = query.limit(limit).all()
-            
-            examples = []
-            for entry in results:
-                if entry.transaction_data_snapshot and entry.classification_path:
-                    examples.append({
-                        'transaction_data': entry.transaction_data_snapshot,
-                        'supplier_profile': entry.supplier_profile_snapshot or {},
-                        'classification_path': entry.classification_path,
-                        'confidence': entry.confidence or 'high',
-                        'reasoning': entry.reasoning or '',
-                        'l1': entry.l1,
-                        'l2': entry.l2,
-                        'l3': entry.l3,
-                        'l4': entry.l4,
-                        'l5': entry.l5,
-                    })
-            
-            return examples
-    
     def clear_cache(self) -> int:
         """
         Clear all classification cache entries from the database.

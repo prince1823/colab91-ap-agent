@@ -72,7 +72,7 @@ class SpendClassificationPipeline:
             self.db_manager = ClassificationDBManager(db_path=config.database_path)
             # Cache the config value to avoid repeated get_config() calls in hot path
             self.supplier_cache_max_age_days = config.supplier_cache_max_age_days if hasattr(config, 'supplier_cache_max_age_days') else None
-            # Pass db_manager to expert classifier for BootstrapFewShot examples
+            # Pass db_manager to expert classifier for classification caching
             self.expert_classifier.db_manager = self.db_manager
 
 

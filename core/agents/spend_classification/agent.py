@@ -12,7 +12,7 @@ import yaml
 from core.agents.context_prioritization.model import PrioritizationDecision
 from core.agents.spend_classification.model import ClassificationResult
 from core.agents.spend_classification.signature import SpendClassificationSignature
-from core.agents.spend_classification.tools import validate_path, lookup_paths, get_l1_categories
+from core.agents.spend_classification.tools import validate_path, lookup_paths
 from core.agents.taxonomy_rag import TaxonomyRetriever
 from core.llms.llm import get_llm_for_agent
 from core.utils.mlflow import setup_mlflow_tracing
@@ -45,9 +45,7 @@ class ExpertClassifier:
         self.research_agent = None  # Research agent (for supplier research, not company domain context)
         self._company_context_cache: Dict[str, str] = {}  # Cache company domain context
         self._classifier = None  # ChainOfThought classifier instance
-        self.db_manager = None  # Will be set by pipeline for BootstrapFewShot examples
-        self._max_examples = 2  # Maximum number of examples to include (conservative to minimize tokens)
-        self._enable_examples = True  # Enabled - improves accuracy
+        self.db_manager = None  # Will be set by pipeline for classification caching
         self._taxonomy_retriever = TaxonomyRetriever()  # RAG component for taxonomy retrieval
 
 
@@ -347,188 +345,6 @@ class ExpertClassifier:
         self._company_context_cache[cache_key] = result
         return result
     
-    def _find_similar_successful_examples(
-        self, 
-        transaction_data: Dict, 
-        supplier_profile: Dict,
-        taxonomy_path: Optional[str] = None,
-        dataset_name: Optional[str] = None,
-        limit: int = 3
-    ) -> List[Dict]:
-        """
-        Find similar successful classification examples using semantic search.
-        
-        Args:
-            transaction_data: Current transaction data
-            supplier_profile: Current supplier profile
-            taxonomy_path: Optional taxonomy path (for filtering)
-            dataset_name: Optional dataset name (for filtering)
-            limit: Maximum number of examples to return
-            
-        Returns:
-            List of similar successful examples with their classification paths
-        """
-        # Need db_manager to get successful examples
-        # This will be set by the pipeline
-        if not hasattr(self, 'db_manager') or self.db_manager is None:
-            return []
-        
-        try:
-            # Get all successful examples from database
-            successful_examples = self.db_manager.get_successful_examples(
-                taxonomy_path=taxonomy_path,
-                dataset_name=dataset_name,
-                min_confidence='high',
-                min_usage_count=2,
-                limit=100  # Get more candidates, then filter by similarity
-            )
-            
-            if not successful_examples:
-                return []
-            
-            # Build query text from current transaction - prioritize STRONG signals
-            query_parts = []
-            
-            # STRONG SIGNALS FIRST
-            if supplier_profile:
-                if supplier_profile.get('products_services'):
-                    query_parts.append(str(supplier_profile['products_services']))
-                if supplier_profile.get('service_type'):
-                    query_parts.append(str(supplier_profile['service_type']))
-            
-            if is_valid_value(transaction_data.get('department')):
-                query_parts.append(str(transaction_data['department']))
-            
-            if is_valid_value(transaction_data.get('gl_code')):
-                query_parts.append(str(transaction_data['gl_code']))
-            
-            # WEAK SIGNALS LAST (only if needed)
-            if len(query_parts) < 2:
-                if is_valid_value(transaction_data.get('line_description')):
-                    query_parts.append(str(transaction_data['line_description']))
-                if is_valid_value(transaction_data.get('gl_description')):
-                    query_parts.append(str(transaction_data['gl_description']))
-            
-            if not query_parts:
-                return []
-            
-            query_text = " ".join(query_parts[:3])  # Use top 3 parts
-            
-            # Build texts from example transactions for semantic search
-            example_texts = []
-            for example in successful_examples:
-                example_parts = []
-                ex_trans = example.get('transaction_data', {})
-                ex_supplier = example.get('supplier_profile', {})
-                
-                # STRONG SIGNALS FIRST
-                if ex_supplier:
-                    if ex_supplier.get('products_services'):
-                        example_parts.append(str(ex_supplier['products_services']))
-                    if ex_supplier.get('service_type'):
-                        example_parts.append(str(ex_supplier['service_type']))
-                
-                if is_valid_value(ex_trans.get('department')):
-                    example_parts.append(str(ex_trans['department']))
-                
-                if is_valid_value(ex_trans.get('gl_code')):
-                    example_parts.append(str(ex_trans['gl_code']))
-                
-                # WEAK SIGNALS LAST
-                if is_valid_value(ex_trans.get('line_description')):
-                    example_parts.append(str(ex_trans['line_description']))
-                if is_valid_value(ex_trans.get('gl_description')):
-                    example_parts.append(str(ex_trans['gl_description']))
-                
-                if example_parts:
-                    example_texts.append(" ".join(example_parts[:3]))
-                else:
-                    example_texts.append("")
-            
-            # Use semantic search to find similar examples
-            try:
-                from sentence_transformers import SentenceTransformer
-                import numpy as np
-                
-                model = SentenceTransformer('all-MiniLM-L6-v2')
-                
-                # Encode query and examples
-                query_embedding = model.encode([query_text], convert_to_numpy=True)[0]
-                example_embeddings = model.encode(example_texts, convert_to_numpy=True)
-                
-                # Calculate cosine similarities
-                similarities = np.dot(example_embeddings, query_embedding) / (
-                    np.linalg.norm(example_embeddings, axis=1) * np.linalg.norm(query_embedding)
-                )
-                
-                # Get top N most similar examples
-                top_indices = np.argsort(similarities)[::-1][:limit]
-                
-                similar_examples = []
-                for idx in top_indices:
-                    if similarities[idx] > 0.4:  # Higher threshold (0.4) to ensure quality matches only
-                        similar_examples.append(successful_examples[idx])
-                
-                return similar_examples
-                
-            except ImportError:
-                # Fallback to simple word matching if semantic search not available
-                logger.warning("Semantic search not available, using simple word matching for examples")
-                query_words = set(query_text.lower().split())
-                
-                scored_examples = []
-                for idx, example_text in enumerate(example_texts):
-                    if example_text:
-                        example_words = set(example_text.lower().split())
-                        overlap = len(query_words & example_words) / max(len(query_words), 1)
-                        if overlap > 0.2:  # At least 20% word overlap
-                            scored_examples.append((overlap, successful_examples[idx]))
-                
-                scored_examples.sort(key=lambda x: -x[0])
-                return [ex for _, ex in scored_examples[:limit]]
-                
-        except Exception as e:
-            logger.warning(f"Error finding similar examples: {e}", exc_info=True)
-            return []
-    
-    def _format_examples_for_prompt(self, examples: List[Dict]) -> str:
-        """
-        Format successful examples for inclusion in the prompt.
-        Keeps examples concise to minimize token usage.
-        
-        Args:
-            examples: List of example dictionaries from _find_similar_successful_examples
-            
-        Returns:
-            Formatted string with examples (concise format)
-        """
-        if not examples:
-            return ""
-        
-        lines = ["\nSimilar examples:", ""]
-        
-        for idx, example in enumerate(examples[:self._max_examples], 1):
-            ex_trans = example.get('transaction_data', {})
-            classification_path = example.get('classification_path', '')
-            
-            # Use strong signals first for example description
-            desc = ""
-            if is_valid_value(ex_trans.get('department')):
-                desc = f"Dept: {str(ex_trans['department'])[:60]}"
-            elif is_valid_value(ex_trans.get('gl_code')):
-                desc = f"GL: {str(ex_trans['gl_code'])[:60]}"
-            elif is_valid_value(ex_trans.get('line_description')):
-                desc = str(ex_trans['line_description'])[:80]  # Truncate to 80 chars
-            elif is_valid_value(ex_trans.get('gl_description')):
-                desc = str(ex_trans['gl_description'])[:80]
-            
-            if desc and classification_path:
-                lines.append(f"{idx}. \"{desc}\" → {classification_path}")
-        
-        if len(lines) > 2:  # Has examples
-            return "\n".join(lines)
-        return ""
-
     def classify_transaction(
         self,
         supplier_profile: Dict,
@@ -559,26 +375,6 @@ class ExpertClassifier:
         flat_paths = []
         for paths in l1_grouped_paths.values():
             flat_paths.extend(paths)
-        
-        # Find similar successful examples for BootstrapFewShot (optional, can be disabled for rate limits)
-        similar_examples = []
-        if (self._enable_examples and hasattr(self, 'db_manager') and self.db_manager):
-            try:
-                similar_examples = self._find_similar_successful_examples(
-                    transaction_data=transaction_data,
-                    supplier_profile=supplier_profile,
-                    taxonomy_path=taxonomy_source,
-                    dataset_name=dataset_name,
-                    limit=self._max_examples
-                )
-                # Only include examples if we have high-quality matches (similarity > threshold)
-                # This prevents adding noise and unnecessary tokens
-                if similar_examples:
-                    examples_text = self._format_examples_for_prompt(similar_examples)
-                    if examples_text:  # Only add if we have valid examples
-                        taxonomy_sample += "\n" + examples_text
-            except Exception as e:
-                logger.debug(f"Could not retrieve similar examples: {e}")
         
         prioritization = prioritization_decision.prioritization_strategy if prioritization_decision else "balanced"
         domain_context = self._extract_domain_context(

@@ -2,7 +2,7 @@
 
 from core.agents.spend_classification.agent import ExpertClassifier
 from core.agents.spend_classification.signature import SpendClassificationSignature
-from core.agents.spend_classification.tools import validate_path, lookup_paths, get_l1_categories
+from core.agents.spend_classification.tools import validate_path, lookup_paths
 from core.agents.spend_classification.model import ClassificationResult
 
 __all__ = [
@@ -11,5 +11,4 @@ __all__ = [
     "ClassificationResult",
     "validate_path",
     "lookup_paths",
-    "get_l1_categories",
 ]
