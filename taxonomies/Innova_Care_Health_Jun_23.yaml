@@ -1,5 +1,10 @@
 client_name: Innova Care Health
 project_id: Innova_Care_Health_Jun_23
+company_context:
+  industry: "Healthcare"
+  sector: "Healthcare Services"
+  description: "Healthcare provider operating multiple facilities with focus on clinical services, patient care, and medical equipment procurement. Provides comprehensive healthcare services including clinical care, diagnostics, and facility operations."
+  business_focus: "Patient care delivery, clinical operations, medical supply chain management, and healthcare facility management"
 max_taxonomy_depth: 4
 available_levels:
 - L1

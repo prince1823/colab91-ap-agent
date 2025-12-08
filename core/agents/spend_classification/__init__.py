@@ -1,7 +1,14 @@
-"""Spend classification agent."""
+"""Spend classification agent using dspy.ChainOfThought (single-shot) with semantic pre-search."""
 
-from core.agents.spend_classification.agent import SpendClassifier
+from core.agents.spend_classification.agent import ExpertClassifier
+from core.agents.spend_classification.signature import SpendClassificationSignature
+from core.agents.spend_classification.tools import validate_path, lookup_paths
 from core.agents.spend_classification.model import ClassificationResult
-from core.agents.spend_classification.validation import ClassificationValidator
 
-__all__ = ["SpendClassifier", "ClassificationResult", "ClassificationValidator"]
+__all__ = [
+    "ExpertClassifier",
+    "SpendClassificationSignature",
+    "ClassificationResult",
+    "validate_path",
+    "lookup_paths",
+]

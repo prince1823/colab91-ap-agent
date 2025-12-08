@@ -87,6 +87,20 @@ class AppConfig(BaseSettings):
     # Data paths
     data_dir: Path = Field(default=Path("data"), alias="DATA_DIR")
     results_dir: Path = Field(default=Path("results"), alias="RESULTS_DIR")
+    
+    # Database configuration
+    database_path: Path = Field(
+        default=Path("data/classifications.db"), alias="DATABASE_PATH"
+    )
+    enable_classification_cache: bool = Field(
+        default=False, alias="ENABLE_CLASSIFICATION_CACHE"
+    )
+    supplier_cache_max_age_days: Optional[int] = Field(
+        default=None, alias="SUPPLIER_CACHE_MAX_AGE_DAYS"
+    )
+    """Maximum age in days for cached supplier profiles. If None, uses any cached profile.
+    Set this to a value (e.g., 7) to invalidate stale profiles after research agent changes.
+    """
 
     # Per-Agent LLM Selection
     column_canonicalization_llm: str = Field(
@@ -95,6 +109,9 @@ class AppConfig(BaseSettings):
     research_llm: str = Field(default="openai", alias="RESEARCH_LLM")
     spend_classification_llm: str = Field(
         default="openai", alias="SPEND_CLASSIFICATION_LLM"
+    )
+    context_prioritization_llm: str = Field(
+        default="openai", alias="CONTEXT_PRIORITIZATION_LLM"
     )
 
     # LLM Provider Settings
@@ -125,6 +142,8 @@ class AppConfig(BaseSettings):
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.results_dir.mkdir(parents=True, exist_ok=True)
         self.dspy.cache_dir.mkdir(parents=True, exist_ok=True)
+        # Ensure database directory exists
+        self.database_path.parent.mkdir(parents=True, exist_ok=True)
 
 
 # Global configuration instance

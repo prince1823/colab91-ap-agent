@@ -1,5 +1,10 @@
 client_name: S&P Global
 project_id: S&P_Global_20231215_153855
+company_context:
+  industry: "Financial Services"
+  sector: "Financial Data & Analytics"
+  description: "Financial information and analytics company providing market intelligence, credit ratings, indices, and data services to financial markets. Primary focus on financial data products, market research, and information services for global financial markets."
+  business_focus: "Financial data and analytics services, market research, credit ratings, index services, and financial information technology"
 max_taxonomy_depth: 3
 available_levels:
 - L1

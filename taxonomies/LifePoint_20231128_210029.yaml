@@ -1,5 +1,10 @@
 client_name: LifePoint Healthcare
 project_id: LifePoint_20231128_210029
+company_context:
+  industry: "Healthcare"
+  sector: "Hospital & Healthcare Services"
+  description: "Hospital system operating multiple healthcare facilities providing comprehensive clinical services, patient care, and medical equipment management. Focus on acute care, clinical operations, and healthcare facility infrastructure."
+  business_focus: "Hospital operations, clinical services delivery, medical equipment and supplies procurement, and healthcare facility management"
 max_taxonomy_depth: 4
 available_levels:
 - L1

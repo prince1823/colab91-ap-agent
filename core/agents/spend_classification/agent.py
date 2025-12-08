@@ -1,27 +1,28 @@
-"""Spend Classification Engine using DSPy
-
-Classifies spend transactions using supplier intelligence, transaction data, and taxonomy.
-"""
+"""Expert Spend Classification Agent using ChainOfThought (single-shot) with semantic pre-search."""
 
 import json
+import logging
 import threading
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import dspy
-import pandas as pd
 import yaml
 
-from core.config import get_config
+from core.agents.context_prioritization.model import PrioritizationDecision
+from core.agents.spend_classification.model import ClassificationResult
+from core.agents.spend_classification.signature import SpendClassificationSignature
+from core.agents.spend_classification.tools import validate_path, lookup_paths
+from core.agents.taxonomy_rag import TaxonomyRetriever
 from core.llms.llm import get_llm_for_agent
 from core.utils.mlflow import setup_mlflow_tracing
-from core.agents.spend_classification.signature import SpendClassificationSignature
-from core.agents.spend_classification.model import ClassificationResult
-from core.agents.spend_classification.validation import ClassificationValidator
+from core.utils.transaction_utils import is_valid_value
+
+logger = logging.getLogger(__name__)
 
 
-class SpendClassifier:
-    """Spend Classification Engine using DSPy"""
+class ExpertClassifier:
+    """ChainOfThought-based Spend Classification Agent with semantic taxonomy pre-search."""
 
     def __init__(
         self,
@@ -29,211 +30,487 @@ class SpendClassifier:
         lm: Optional[dspy.LM] = None,
         enable_tracing: bool = True,
     ):
-        """
-        Initialize classifier
-
-        Args:
-            taxonomy_path: Optional path to taxonomy YAML file used as default
-            lm: DSPy language model (if None, uses default configured LM)
-            enable_tracing: Whether to enable MLflow tracing (default: True)
-        """
-        # Setup MLflow tracing if enabled
         if enable_tracing:
-            setup_mlflow_tracing(experiment_name="spend_classification")
+            setup_mlflow_tracing(experiment_name="expert_classification")
 
         if lm is None:
             lm = get_llm_for_agent("spend_classification")
 
         dspy.configure(lm=lm)
 
-        self.taxonomy_path: Optional[str] = str(taxonomy_path) if taxonomy_path else None
-
-        # Initialize validator for post-processing
-        self.validator = (
-            ClassificationValidator(self.taxonomy_path) if self.taxonomy_path else None
-        )
-
-        # Create DSPy predictor
-        self.classifier = dspy.ChainOfThought(SpendClassificationSignature)
-        
-        # Cache for taxonomy data to avoid reloading for each transaction
+        self.taxonomy_path = str(taxonomy_path) if taxonomy_path else None
         self._taxonomy_cache: Dict[str, Dict] = {}
-        # Lock for thread-safe cache access
         self._cache_lock = threading.Lock()
+        self._current_taxonomy: List[str] = []
+        self.research_agent = None  # Research agent (for supplier research, not company domain context)
+        self._company_context_cache: Dict[str, str] = {}  # Cache company domain context
+        self._classifier = None  # ChainOfThought classifier instance
+        self.db_manager = None  # Will be set by pipeline for classification caching
+        self._taxonomy_retriever = TaxonomyRetriever()  # RAG component for taxonomy retrieval
+
 
     def load_taxonomy(self, taxonomy_path: Union[str, Path]) -> Dict:
-        """Load taxonomy from YAML file"""
+        """Load taxonomy from YAML with caching."""
         path_str = str(taxonomy_path)
-        with open(path_str, 'r') as f:
-            return yaml.safe_load(f)
+        with self._cache_lock:
+            if path_str not in self._taxonomy_cache:
+                with open(path_str, 'r') as f:
+                    self._taxonomy_cache[path_str] = yaml.safe_load(f)
+            return self._taxonomy_cache[path_str]
 
-    def _format_transaction_data(self, transaction_data: Dict) -> str:
-        """Format transaction data to emphasize relevant fields"""
-        def _is_valid_value(value) -> bool:
-            """Check if value is valid and not empty"""
-            if value is None:
-                return False
+    def _format_supplier_info(self, supplier_profile: Dict) -> str:
+        if not supplier_profile:
+            return "{}"
+        relevant = {
+            'name': supplier_profile.get('supplier_name', ''),
+            'industry': supplier_profile.get('industry', ''),
+            'products_services': supplier_profile.get('products_services', ''),
+            'service_type': supplier_profile.get('service_type', ''),
+            'description': (str(supplier_profile.get('description', '') or ''))[:300],
+        }
+        return json.dumps({k: v for k, v in relevant.items() if v}, indent=2)
+
+    def _format_transaction_info(self, transaction_data: Dict) -> str:
+        """Format transaction data, presenting all available signals clearly.
+        
+        No hardcoded priorities or pattern detection - presents raw data organized
+        by field type. The LLM will identify patterns and decide what matters.
+        """
+        parts = []
+        
+        # Organize fields by type for clarity, but present all available data
+        structured_fields = []
+        description_fields = []
+        reference_fields = []
+        other_fields = []
+        
+        # Structured/contextual fields
+        if is_valid_value(transaction_data.get('department')):
+            structured_fields.append(('Department', transaction_data['department']))
+        
+        if is_valid_value(transaction_data.get('gl_code')):
+            structured_fields.append(('GL Code', transaction_data['gl_code']))
+        
+        if is_valid_value(transaction_data.get('cost_center')):
+            structured_fields.append(('Cost Center', transaction_data['cost_center']))
+        
+        if is_valid_value(transaction_data.get('amount')):
             try:
-                if pd.isna(value):
-                    return False
-            except (TypeError, ValueError):
-                # Not a pandas type, check if it's a valid string
-                pass
-            return bool(str(value).strip())
+                amount_val = float(str(transaction_data['amount']).replace(',', ''))
+                amount_str = f"${amount_val:,.2f}" if amount_val >= 1 else f"${amount_val:.2f}"
+                structured_fields.append(('Amount', amount_str))
+            except (ValueError, TypeError):
+                structured_fields.append(('Amount', transaction_data['amount']))
         
-        # Priority fields for classification
-        priority_fields = {
-            'line_description': 'Line Description',
-            'gl_description': 'GL Description', 
-            'department': 'Department',
-            'po_number': 'PO Number',
-            'invoice_number': 'Invoice Number',
-        }
+        # Reference/identifier fields
+        if is_valid_value(transaction_data.get('po_number')):
+            reference_fields.append(('PO Number', transaction_data['po_number']))
         
-        # Secondary fields
-        secondary_fields = {
-            'cost_center': 'Cost Center',
-            'amount': 'Amount',
-            'currency': 'Currency',
-        }
+        if is_valid_value(transaction_data.get('invoice_number')):
+            reference_fields.append(('Invoice Number', transaction_data['invoice_number']))
         
-        formatted_parts = []
+        if is_valid_value(transaction_data.get('invoice_date')):
+            reference_fields.append(('Invoice Date', transaction_data['invoice_date']))
         
-        # Add priority fields first
-        formatted_parts.append("PRIMARY TRANSACTION DATA:")
-        for key, label in priority_fields.items():
-            value = transaction_data.get(key)
-            if _is_valid_value(value):
-                formatted_parts.append(f"  {label}: {value}")
+        # Description fields (present raw - LLM identifies patterns)
+        if is_valid_value(transaction_data.get('line_description')):
+            description_fields.append(('Line Description', transaction_data['line_description']))
         
-        # Add secondary fields if available
-        has_secondary = any(
-            _is_valid_value(transaction_data.get(k))
-            for k in secondary_fields.keys()
+        if is_valid_value(transaction_data.get('gl_description')):
+            description_fields.append(('GL Description', transaction_data['gl_description']))
+        
+        # Other fields
+        excluded_fields = {'supplier_name', 'L1', 'L2', 'L3', 'L4', 'L5', 'classification_path', 
+                          'pipeline_output', 'expected_output', 'error', 'reasoning',
+                          'line_description', 'gl_description', 'department', 'gl_code', 
+                          'invoice_number', 'po_number', 'invoice_date', 'amount', 'cost_center',
+                          'currency', 'supplier_address'}
+        for key, value in sorted(transaction_data.items()):
+            if key not in excluded_fields and is_valid_value(value):
+                other_fields.append((key.replace('_', ' ').title(), value))
+        
+        # Format sections
+        if structured_fields:
+            parts.append("Transaction Context:")
+            for label, value in structured_fields:
+                parts.append(f"  {label}: {value}")
+        
+        if description_fields:
+            if parts:
+                parts.append("")
+            parts.append("Descriptions:")
+            for label, value in description_fields:
+                # Show full description - LLM will identify patterns
+                display_value = str(value)
+                if len(display_value) > 200:
+                    display_value = display_value[:197] + "..."
+                parts.append(f"  {label}: {display_value}")
+        
+        if reference_fields:
+            if parts:
+                parts.append("")
+            parts.append("References:")
+            for label, value in reference_fields:
+                parts.append(f"  {label}: {value}")
+        
+        if other_fields:
+            if parts:
+                parts.append("")
+            parts.append("Additional Information:")
+            for label, value in other_fields:
+                display_value = str(value)
+                if len(display_value) > 150:
+                    display_value = display_value[:147] + "..."
+                parts.append(f"  {label}: {display_value}")
+        
+        # Add field completeness summary (contextual, not hardcoded patterns)
+        if parts:
+            field_counts = {
+                'structured': len(structured_fields),
+                'descriptions': len(description_fields),
+                'references': len(reference_fields),
+                'other': len(other_fields)
+            }
+            
+            # Only show if there are fields available
+            if any(field_counts.values()):
+                parts.append("")
+                available_info = []
+                if field_counts['structured'] > 0:
+                    available_info.append(f"{field_counts['structured']} structured field(s)")
+                if field_counts['descriptions'] > 0:
+                    available_info.append(f"{field_counts['descriptions']} description field(s)")
+                if field_counts['references'] > 0:
+                    available_info.append(f"{field_counts['references']} reference field(s)")
+                if field_counts['other'] > 0:
+                    available_info.append(f"{field_counts['other']} other field(s)")
+                
+                parts.append(f"Data Completeness: {', '.join(available_info)} available")
+                parts.append("(Evaluate which fields provide the most relevant signals for this transaction)")
+        
+        return "\n".join(parts) if parts else "No transaction details available"
+
+    def _get_relevant_taxonomy_paths(
+        self, 
+        transaction_data: Dict, 
+        supplier_profile: Dict, 
+        taxonomy_list: List[str]
+    ) -> Tuple[Dict[str, List[str]], Dict[str, float]]:
+        """
+        Use RAG component (FAISS + hybrid search) to find relevant taxonomy paths.
+        
+        Uses the TaxonomyRetriever with:
+        - Keyword similarity (fast, exact matches)
+        - Semantic similarity via FAISS (flexible, contextual matches)
+        - Includes all transaction fields (including GL/Line descriptions)
+        - Increased sample size for better context
+        
+        Returns:
+            Tuple of:
+            - Dictionary mapping L1 category to list of paths within that L1
+            - Dictionary mapping path to similarity score (0-1)
+        """
+        # Use the new RAG component for hybrid search with increased sample size
+        grouped_paths = self._taxonomy_retriever.retrieve_grouped_by_l1(
+            transaction_data=transaction_data,
+            supplier_profile=supplier_profile,
+            taxonomy_list=taxonomy_list,
+            max_l1_categories=6,      # Increased from 5
+            max_paths_per_l1=10,      # Increased from 8
+            max_total_paths=60        # Increased from 35 to 50-60 range
         )
-        if has_secondary:
-            formatted_parts.append("\nADDITIONAL CONTEXT:")
-            for key, label in secondary_fields.items():
-                value = transaction_data.get(key)
-                if _is_valid_value(value):
-                    formatted_parts.append(f"  {label}: {value}")
         
-        return "\n".join(formatted_parts) if formatted_parts else "No transaction details available"
-
-    def _assess_transaction_data_quality(self, transaction_data: Dict) -> str:
-        """Assess quality of transaction data"""
-        def _has_valid_field(field_name: str) -> bool:
-            """Check if field exists and has valid content"""
-            value = transaction_data.get(field_name)
-            if value is None:
-                return False
-            try:
-                if pd.isna(value):
-                    return False
-            except (TypeError, ValueError):
-                pass
-            return bool(str(value).strip())
+        # Get individual path scores for all retrieved paths
+        all_results = self._taxonomy_retriever.retrieve_with_scores(
+            transaction_data=transaction_data,
+            supplier_profile=supplier_profile,
+            taxonomy_list=taxonomy_list,
+            top_k=60,  # Get more for score extraction (increased from 50)
+            min_score=0.05  # Lower threshold to get more results
+        )
         
-        has_line_desc = _has_valid_field('line_description')
-        has_gl_desc = _has_valid_field('gl_description')
-        has_po = _has_valid_field('po_number')
+        # Build scores dictionary
+        scores_dict = {r.path: r.combined_score for r in all_results}
         
-        if has_line_desc or has_gl_desc or has_po:
-            return "HIGH - Rich transaction data available. Prioritize transaction details over supplier industry."
-        elif has_line_desc or has_gl_desc:
-            return "MEDIUM - Some transaction data available. Use transaction details primarily, supplement with supplier context."
+        return grouped_paths, scores_dict
+    
+    def _format_taxonomy_sample_by_l1(
+        self, 
+        l1_grouped_paths: Dict[str, List[str]],
+        similarity_scores: Optional[Dict[str, float]] = None
+    ) -> str:
+        """
+        Format taxonomy paths sorted by depth (deepest first) to encourage bottom-up matching.
+        Optionally includes similarity scores from RAG retrieval (contextual signal, not hardcoded).
+        
+        Args:
+            l1_grouped_paths: Dictionary mapping L1 category to list of paths
+            similarity_scores: Optional dictionary mapping path to similarity score (0-1)
+            
+        Returns:
+            Formatted string with paths sorted by depth (deepest first)
+        """
+        if not l1_grouped_paths:
+            return "No relevant paths found."
+        
+        # Flatten the grouped paths into a simple list
+        flat_paths = []
+        for paths in l1_grouped_paths.values():
+            flat_paths.extend(paths)
+        
+        # Sort by depth descending (most specific/deepest paths first) for bottom-up matching
+        # If scores available, also sort by score (higher first)
+        if similarity_scores:
+            flat_paths.sort(key=lambda p: (
+                -len(p.split("|")),  # Depth first (deeper = more specific)
+                -similarity_scores.get(p, 0.0),  # Then by similarity score
+                p  # Then alphabetically
+            ))
         else:
-            return "LOW - Limited transaction data. Rely more on supplier industry/products, but still consider transaction context."
-
+            flat_paths.sort(key=lambda p: (-len(p.split("|")), p))
+        
+        # Format paths with scores if available
+        formatted_lines = ["Relevant taxonomy paths (deepest/most specific paths first - match these end nodes first):"]
+        for path in flat_paths:
+            depth = len(path.split("|"))
+            if similarity_scores and path in similarity_scores:
+                score = similarity_scores[path]
+                formatted_lines.append(f"L{depth} [{score:.2f}]: {path}")
+            else:
+                formatted_lines.append(f"L{depth}: {path}")
+        
+        if similarity_scores:
+            formatted_lines.append("\n(Similarity scores indicate RAG retrieval confidence - use as one signal among many when making your classification decision.)")
+        
+        return "\n".join(formatted_lines)
+    
+    def _extract_domain_context(
+        self, 
+        taxonomy_path: str, 
+        dataset_name: Optional[str] = None
+    ) -> str:
+        """
+        Extract company domain context from taxonomy YAML file.
+        Reads company_context field from taxonomy if available, otherwise falls back to company name.
+        """
+        cache_key = f"{taxonomy_path}|{dataset_name}"
+        if cache_key in self._company_context_cache:
+            return self._company_context_cache[cache_key]
+        
+        context_parts = []
+        
+        # Try to load company context from taxonomy YAML file
+        try:
+            taxonomy_data = self.load_taxonomy(taxonomy_path)
+            
+            # Check for company_context field in taxonomy
+            company_context = taxonomy_data.get('company_context')
+            if company_context:
+                # Support both string and dict formats
+                if isinstance(company_context, str):
+                    context_parts.append(company_context)
+                elif isinstance(company_context, dict):
+                    # Format dict fields into readable context
+                    if company_context.get('industry'):
+                        context_parts.append(f"Company Industry: {company_context['industry']}")
+                    if company_context.get('description'):
+                        desc = str(company_context['description'])
+                        context_parts.append(f"Company Description: {desc[:300]}")
+                    if company_context.get('sector'):
+                        context_parts.append(f"Company Sector: {company_context['sector']}")
+                    if company_context.get('business_focus'):
+                        context_parts.append(f"Business Focus: {company_context['business_focus']}")
+            
+            # Also include client_name from taxonomy if available
+            client_name = taxonomy_data.get('client_name')
+            if client_name and not company_context:
+                context_parts.append(f"Company Name: {client_name}")
+        except Exception as e:
+            logger.debug(f"Could not load company context from taxonomy: {e}")
+        
+        # Fallback: Extract company name from taxonomy filename if no context found
+        if not context_parts:
+            taxonomy_filename = str(taxonomy_path).split('/')[-1] if '/' in str(taxonomy_path) else str(taxonomy_path)
+            company_name = taxonomy_filename.split('_')[0] if '_' in taxonomy_filename else taxonomy_filename.replace('.yaml', '').replace('.YAML', '')
+            if company_name and company_name.lower() not in ['taxonomy', 'taxonomies']:
+                context_parts.append(f"Company Name: {company_name}")
+        
+        # Add dataset name if provided
+        if dataset_name:
+            context_parts.append(f"Dataset: {dataset_name}")
+        
+        result = " | ".join(context_parts) if context_parts else "General business context"
+        
+        # Cache result
+        self._company_context_cache[cache_key] = result
+        return result
+    
     def classify_transaction(
         self,
         supplier_profile: Dict,
-        transaction_data: Union[Dict, str],
-        taxonomy_yaml: Optional[Union[str, Path]] = None,
+        transaction_data: Dict,
+        taxonomy_yaml: Optional[str] = None,
+        prioritization_decision: Optional[PrioritizationDecision] = None,
+        dataset_name: Optional[str] = None,
     ) -> ClassificationResult:
-        """
-        Classify a spend transaction
-
-        Args:
-            supplier_profile: Supplier information dict
-            transaction_data: Transaction details dict or formatted string
-            taxonomy_yaml: Path to taxonomy YAML file (overrides default if provided)
-
-        Returns:
-            ClassificationResult with L1-L5 classification
-        """
+        """Classify a transaction using ChainOfThought (single-shot) with semantic pre-search."""
         taxonomy_source = taxonomy_yaml or self.taxonomy_path
         if taxonomy_source is None:
-            raise ValueError(
-                "A taxonomy YAML path must be provided to classify a transaction."
+            raise ValueError("Taxonomy path must be provided")
+
+        taxonomy_data = self.load_taxonomy(taxonomy_source)
+        taxonomy_list = taxonomy_data.get('taxonomy', [])
+        self._current_taxonomy = taxonomy_list
+
+        supplier_info = self._format_supplier_info(supplier_profile)
+        transaction_info = self._format_transaction_info(transaction_data)
+        
+        # Use semantic search to find top relevant paths, grouped by L1, with similarity scores
+        l1_grouped_paths, similarity_scores = self._get_relevant_taxonomy_paths(transaction_data, supplier_profile, taxonomy_list)
+        
+        # Format taxonomy paths organized by L1 for better LLM reasoning, with similarity scores
+        taxonomy_sample = self._format_taxonomy_sample_by_l1(l1_grouped_paths, similarity_scores)
+        
+        # Also create flat list for pre-search tracking
+        flat_paths = []
+        for paths in l1_grouped_paths.values():
+            flat_paths.extend(paths)
+        
+        prioritization = prioritization_decision.prioritization_strategy if prioritization_decision else "balanced"
+        domain_context = self._extract_domain_context(
+            taxonomy_yaml or self.taxonomy_path, 
+            dataset_name
+        )
+
+        # Use ChainOfThought for single-shot classification (reduces API calls and avoids rate limits)
+        if self._classifier is None:
+            self._classifier = dspy.ChainOfThought(SpendClassificationSignature)
+
+        try:
+            result = self._classifier(
+                supplier_info=supplier_info,
+                transaction_info=transaction_info,
+                taxonomy_sample=taxonomy_sample,
+                prioritization=prioritization,
+                domain_context=domain_context,
             )
+            classification_path = str(result.classification_path or '').strip()
+            confidence = str(getattr(result, 'confidence', 'medium') or 'medium').lower()
+            reasoning = str(getattr(result, 'reasoning', '') or '')
+            
+            # Track pre-search performance: log if classification path was NOT in pre-searched paths
+            # This helps us understand if pre-search is missing correct paths
+            if classification_path and classification_path != "Unknown":
+                path_normalized = classification_path.strip().lower()
+                preselected_normalized = [p.strip().lower() for p in flat_paths]
+                if path_normalized not in preselected_normalized:
+                    logger.debug(
+                        f"Pre-search miss: Final path '{classification_path}' was NOT in pre-searched paths "
+                        f"(found {len(flat_paths)} pre-searched paths)"
+                    )
+                else:
+                    logger.debug(
+                        f"Pre-search hit: Final path '{classification_path}' was in pre-searched paths"
+                    )
+        except Exception as e:
+            logger.error(f"Classification failed: {e}", exc_info=True)
+            classification_path = "Unknown"
+            confidence = "low"
+            reasoning = f"Classification failed: {e}"
 
-        # Use cached taxonomy if available, otherwise load and cache it (thread-safe)
-        taxonomy_source_str = str(taxonomy_source)
-        with self._cache_lock:
-            if taxonomy_source_str not in self._taxonomy_cache:
-                self._taxonomy_cache[taxonomy_source_str] = self.load_taxonomy(taxonomy_source)
-            taxonomy_data = self._taxonomy_cache[taxonomy_source_str]
+        # Post-validate the classification path
+        validation_result = validate_path(classification_path, taxonomy_list)
+        
+        if not validation_result.get('valid', False):
+            # Path doesn't exist, try to find similar paths
+            similar_paths = validation_result.get('similar_paths', [])
+            if similar_paths:
+                # Use the most similar valid path
+                classification_path = similar_paths[0]
+                reasoning += f" [Corrected to valid path: {classification_path}]"
+                logger.debug(f"Invalid path corrected: {classification_path}")
+            else:
+                # Fallback: use semantic search with strong signals first
+                query_parts = []
+                if is_valid_value(transaction_data.get('department')):
+                    query_parts.append(str(transaction_data['department']))
+                if is_valid_value(transaction_data.get('gl_code')):
+                    query_parts.append(str(transaction_data['gl_code']))
+                if supplier_profile:
+                    if supplier_profile.get('products_services'):
+                        query_parts.append(str(supplier_profile['products_services']))
+                    if supplier_profile.get('service_type'):
+                        query_parts.append(str(supplier_profile['service_type']))
+                # Weak signals last
+                if not query_parts:
+                    if is_valid_value(transaction_data.get('line_description')):
+                        query_parts.append(str(transaction_data['line_description']))
+                    if is_valid_value(transaction_data.get('gl_description')):
+                        query_parts.append(str(transaction_data['gl_description']))
+                
+                if query_parts:
+                    query = " ".join(query_parts[:2])  # Use top 2 parts
+                    matches = lookup_paths(str(query), taxonomy_list)
+                    if matches:
+                        classification_path = matches[0]
+                        reasoning += f" [Found via semantic search: {classification_path}]"
+                        logger.debug(f"Path found via semantic search: {classification_path}")
 
-        # Prepare inputs
-        supplier_json = json.dumps(supplier_profile, indent=2)
+        # Validate minimum depth - if only L1 returned, try to find a deeper path
+        if classification_path and "|" not in classification_path and classification_path != "Unknown":
+            logger.warning(f"Only L1 returned: {classification_path}. Attempting to find deeper path.")
+            # Search for paths starting with this L1
+            l1_paths = [p for p in taxonomy_list if p.lower().startswith(classification_path.lower() + "|")]
+            if l1_paths:
+                # Try to find most relevant deeper path using semantic search with strong signals
+                query_parts = []
+                if is_valid_value(transaction_data.get('department')):
+                    query_parts.append(str(transaction_data['department']))
+                if is_valid_value(transaction_data.get('gl_code')):
+                    query_parts.append(str(transaction_data['gl_code']))
+                if supplier_profile:
+                    if supplier_profile.get('products_services'):
+                        query_parts.append(str(supplier_profile['products_services']))
+                # Weak signals as fallback
+                if not query_parts:
+                    if is_valid_value(transaction_data.get('line_description')):
+                        query_parts.append(str(transaction_data['line_description']))
+                    if is_valid_value(transaction_data.get('gl_description')):
+                        query_parts.append(str(transaction_data['gl_description']))
+                
+                if query_parts:
+                    query = " ".join(query_parts[:2])
+                    matches = lookup_paths(str(query), l1_paths)
+                    if matches:
+                        classification_path = matches[0]
+                        reasoning += f" [Auto-expanded from L1 to: {classification_path}]"
+                    else:
+                        # Fallback to first deeper path
+                        classification_path = l1_paths[0]
+                        reasoning += f" [Auto-expanded from L1 to: {classification_path}]"
+                else:
+                    # Fallback to first deeper path if no query available
+                    classification_path = l1_paths[0]
+                    reasoning += f" [Auto-expanded from L1 to: {classification_path}]"
 
-        # Handle string transaction format
-        if isinstance(transaction_data, str):
-            transaction_json = transaction_data  # Use as-is
-            data_quality = "UNKNOWN - Transaction data provided as string"
-        else:
-            # Format transaction data with quality assessment
-            data_quality = self._assess_transaction_data_quality(transaction_data)
-            formatted_transaction = self._format_transaction_data(transaction_data)
-            transaction_json = f"{data_quality}\n\n{formatted_transaction}"
+        return self._path_to_result(classification_path, confidence, reasoning)
 
-        # Format taxonomy as list of pipe-separated strings for LLM
-        taxonomy_list = taxonomy_data['taxonomy']
-        taxonomy_json = json.dumps(taxonomy_list, indent=2)
-
-        # Extract available levels from taxonomy
-        available_levels = taxonomy_data.get('available_levels', ['L1', 'L2', 'L3', 'L4', 'L5'])
-        available_levels_str = ', '.join(available_levels)
-
-        override_rules = (
-            "\n".join(taxonomy_data.get('override_rules', []))
-            if taxonomy_data.get('override_rules')
-            else "None"
+    def _path_to_result(self, path: str, confidence: str, reasoning: str) -> ClassificationResult:
+        """Convert pipe-separated path to ClassificationResult."""
+        parts = [p.strip() for p in path.split("|") if p.strip()]
+        while len(parts) < 5:
+            parts.append(None)
+        
+        return ClassificationResult(
+            L1=parts[0] or "Unknown",
+            L2=parts[1] if len(parts) > 1 else None,
+            L3=parts[2] if len(parts) > 2 else None,
+            L4=parts[3] if len(parts) > 3 else None,
+            L5=parts[4] if len(parts) > 4 else None,
+            override_rule_applied=None,
+            reasoning=f"[{confidence}] {reasoning}",
         )
 
-        # Call LLM
-        result = self.classifier(
-            supplier_profile=supplier_json,
-            transaction_data=transaction_json,
-            taxonomy_structure=taxonomy_json,
-            available_levels=available_levels_str,
-            override_rules=override_rules,
-        )
-
-        # Parse levels
-        l1 = result.L1
-        l2 = result.L2 if result.L2.lower() != 'none' else None
-        l3 = result.L3 if result.L3.lower() != 'none' else None
-        l4 = result.L4 if result.L4.lower() != 'none' else None
-        l5 = result.L5 if result.L5.lower() != 'none' else None
-
-        reasoning = result.reasoning if hasattr(result, 'reasoning') else ""
-
-        # Create result
-        classification = ClassificationResult(
-            L1=l1,
-            L2=l2,
-            L3=l3,
-            L4=l4,
-            L5=l5,
-            override_rule_applied=(
-                result.override_rule_applied
-                if hasattr(result, 'override_rule_applied')
-                and result.override_rule_applied.lower() != 'none'
-                else None
-            ),
-            reasoning=reasoning,
-        )
-
-        return classification
+    def classify_with_tools(self, *args, **kwargs) -> ClassificationResult:
+        """Alias for classify_transaction (backward compat)."""
+        return self.classify_transaction(*args, **kwargs)

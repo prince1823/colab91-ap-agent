@@ -106,8 +106,8 @@ CANONICAL_COLUMNS = [
         canonical_name="supplier_address",
         data_type="string",
         relevance_for_spend_analysis="Medium",
-        description="Supplier address/location - MEDIUM relevance for accurate web search and supplier identification",
-        common_aliases=["Vendor Address", "Supplier Address", "Address", "Location", "Vendor Location", "Supplier Location"],
+        description="Supplier address/location - MEDIUM relevance for accurate web search and supplier identification. Map the most complete address field available (prefer complete 'Supplier Address' over individual components like City/State).",
+        common_aliases=["Vendor Address", "Supplier Address", "Address", "Address Line1", "Address Line 1", "Supplier Address 1", "Location", "Vendor Location"],
         display_order=13,
     ),
     
