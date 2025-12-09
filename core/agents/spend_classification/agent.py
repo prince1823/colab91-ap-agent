@@ -194,7 +194,8 @@ class ExpertClassifier:
         self, 
         transaction_data: Dict, 
         supplier_profile: Dict, 
-        taxonomy_list: List[str]
+        taxonomy_list: List[str],
+        descriptions: Optional[Dict[str, str]] = None
     ) -> Tuple[Dict[str, List[str]], Dict[str, float]]:
         """
         Use RAG component (FAISS + hybrid search) to find relevant taxonomy paths.
@@ -205,6 +206,12 @@ class ExpertClassifier:
         - Includes all transaction fields (including GL/Line descriptions)
         - Increased sample size for better context
         
+        Args:
+            transaction_data: Transaction data dictionary
+            supplier_profile: Supplier profile dictionary
+            taxonomy_list: List of taxonomy paths
+            descriptions: Optional dictionary mapping taxonomy paths to descriptions
+            
         Returns:
             Tuple of:
             - Dictionary mapping L1 category to list of paths within that L1
@@ -217,7 +224,8 @@ class ExpertClassifier:
             taxonomy_list=taxonomy_list,
             max_l1_categories=6,      # Increased from 5
             max_paths_per_l1=10,      # Increased from 8
-            max_total_paths=60        # Increased from 35 to 50-60 range
+            max_total_paths=60,        # Increased from 35 to 50-60 range
+            descriptions=descriptions
         )
         
         # Get individual path scores for all retrieved paths
@@ -226,7 +234,8 @@ class ExpertClassifier:
             supplier_profile=supplier_profile,
             taxonomy_list=taxonomy_list,
             top_k=60,  # Get more for score extraction (increased from 50)
-            min_score=0.05  # Lower threshold to get more results
+            min_score=0.05,  # Lower threshold to get more results
+            descriptions=descriptions
         )
         
         # Build scores dictionary
@@ -237,15 +246,18 @@ class ExpertClassifier:
     def _format_taxonomy_sample_by_l1(
         self, 
         l1_grouped_paths: Dict[str, List[str]],
-        similarity_scores: Optional[Dict[str, float]] = None
+        similarity_scores: Optional[Dict[str, float]] = None,
+        descriptions: Optional[Dict[str, str]] = None
     ) -> str:
         """
         Format taxonomy paths sorted by depth (deepest first) to encourage bottom-up matching.
         Optionally includes similarity scores from RAG retrieval (contextual signal, not hardcoded).
+        Optionally includes descriptions for richer context.
         
         Args:
             l1_grouped_paths: Dictionary mapping L1 category to list of paths
             similarity_scores: Optional dictionary mapping path to similarity score (0-1)
+            descriptions: Optional dictionary mapping taxonomy paths to descriptions
             
         Returns:
             Formatted string with paths sorted by depth (deepest first)
@@ -269,15 +281,28 @@ class ExpertClassifier:
         else:
             flat_paths.sort(key=lambda p: (-len(p.split("|")), p))
         
-        # Format paths with scores if available
+        # Format paths with scores if available, and descriptions if provided
         formatted_lines = ["Relevant taxonomy paths (deepest/most specific paths first - match these end nodes first):"]
         for path in flat_paths:
             depth = len(path.split("|"))
+            line_parts = []
+            
+            # Add score if available
             if similarity_scores and path in similarity_scores:
                 score = similarity_scores[path]
-                formatted_lines.append(f"L{depth} [{score:.2f}]: {path}")
+                line_parts.append(f"L{depth} [{score:.2f}]: {path}")
             else:
-                formatted_lines.append(f"L{depth}: {path}")
+                line_parts.append(f"L{depth}: {path}")
+            
+            # Add description if available (truncated for readability)
+            if descriptions and path in descriptions:
+                desc = descriptions[path].strip()
+                # Truncate long descriptions
+                if len(desc) > 200:
+                    desc = desc[:197] + "..."
+                line_parts.append(f"  Description: {desc}")
+            
+            formatted_lines.append("\n".join(line_parts))
         
         if similarity_scores:
             formatted_lines.append("\n(Similarity scores indicate RAG retrieval confidence - use as one signal among many when making your classification decision.)")
@@ -360,16 +385,26 @@ class ExpertClassifier:
 
         taxonomy_data = self.load_taxonomy(taxonomy_source)
         taxonomy_list = taxonomy_data.get('taxonomy', [])
+        descriptions = taxonomy_data.get('taxonomy_descriptions', {})  # Extract descriptions
         self._current_taxonomy = taxonomy_list
 
         supplier_info = self._format_supplier_info(supplier_profile)
         transaction_info = self._format_transaction_info(transaction_data)
         
         # Use semantic search to find top relevant paths, grouped by L1, with similarity scores
-        l1_grouped_paths, similarity_scores = self._get_relevant_taxonomy_paths(transaction_data, supplier_profile, taxonomy_list)
+        l1_grouped_paths, similarity_scores = self._get_relevant_taxonomy_paths(
+            transaction_data, 
+            supplier_profile, 
+            taxonomy_list,
+            descriptions=descriptions
+        )
         
         # Format taxonomy paths organized by L1 for better LLM reasoning, with similarity scores
-        taxonomy_sample = self._format_taxonomy_sample_by_l1(l1_grouped_paths, similarity_scores)
+        taxonomy_sample = self._format_taxonomy_sample_by_l1(
+            l1_grouped_paths, 
+            similarity_scores,
+            descriptions=descriptions
+        )
         
         # Also create flat list for pre-search tracking
         flat_paths = []
