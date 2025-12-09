@@ -256,6 +256,8 @@ JSON format: {{"supplier_name": "...", "official_business_name": "...", "descrip
         Raises:
             RuntimeError: If Exa is not available or search fails
         """
+        logger.info(f"Starting supplier research for: {supplier_name}")
+
         # Exa is required - raise error if not available
         if not self.use_exa or not self.exa_client:
             raise RuntimeError(

@@ -306,13 +306,21 @@ class SpendClassificationPipeline:
                 # Use supplier address from first row
                 supplier_address = uncached_transactions[0].get('supplier_address')
                 supplier_address = supplier_address if (supplier_address and pd.notna(supplier_address) and str(supplier_address).strip()) else None
-                supplier_profile_obj = self.research_agent.research_supplier(
-                    supplier_name,
-                    supplier_address=supplier_address
-                )
-                supplier_profile = supplier_profile_obj.to_dict()
-                self._supplier_cache[cache_key] = supplier_profile
-                logger.debug(f"Researched and cached: {supplier_name}")
+                try:
+                    supplier_profile_obj = self.research_agent.research_supplier(
+                        supplier_name,
+                        supplier_address=supplier_address
+                    )
+                    supplier_profile = supplier_profile_obj.to_dict()
+                    self._supplier_cache[cache_key] = supplier_profile
+                    logger.debug(f"Researched and cached: {supplier_name}")
+                except Exception as e:
+                    error_msg = f"Supplier research failed for {supplier_name}: {e}"
+                    logger.warning(error_msg)
+                    # Mark all rows in this invoice with the research error and skip classification
+                    for pos, df_idx, row_dict in uncached_rows:
+                        errors.append({'row_index': df_idx, 'supplier_name': supplier_name, 'error': error_msg})
+                    return results, errors
         else:
             # Minimal supplier profile
             supplier_profile = {
@@ -421,7 +429,9 @@ class SpendClassificationPipeline:
         classification_results = [None] * len(canonical_df)
         errors = []
 
-        for invoice_key, invoice_rows in invoices.items():
+        print(f"Processing {len(invoices)} invoices with {len(canonical_df)} total rows")
+        for idx, (invoice_key, invoice_rows) in enumerate(invoices.items(), 1):
+            print(f"Processing invoice {idx}/{len(invoices)}: {invoice_key} ({len(invoice_rows)} rows)")
             invoice_results, invoice_errors = self._classify_invoice(
                 invoice_key=invoice_key,
                 invoice_rows=invoice_rows,
@@ -429,6 +439,9 @@ class SpendClassificationPipeline:
                 run_id=run_id,
                 dataset_name=dataset_name,
             )
+            if invoice_errors:
+                print(f"WARNING: Invoice {invoice_key} had {len(invoice_errors)} errors")
+            print(f"Completed invoice {idx}/{len(invoices)}: {invoice_key}")
 
             # Merge results into master results list
             for pos, result in invoice_results.items():

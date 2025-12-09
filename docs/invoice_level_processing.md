@@ -181,6 +181,11 @@ INFO: Grouped 1000 rows into 247 invoices (avg 4.0 rows/invoice)
 DEBUG: LLM returned single path for 3 rows: Technology|Software...
 ```
 
+**Performance Tuning:**
+- Consider increasing `MAX_ROWS_PER_BATCH` (currently 15) for larger invoices if token limits allow
+- Higher values = fewer API calls but larger prompts
+- Monitor token usage and classification quality when adjusting
+
 ---
 
 ## Configuration
