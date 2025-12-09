@@ -110,7 +110,23 @@ CANONICAL_COLUMNS = [
         common_aliases=["Vendor Address", "Supplier Address", "Address", "Address Line1", "Address Line 1", "Supplier Address 1", "Location", "Vendor Location"],
         display_order=13,
     ),
-    
+    CanonicalColumn(
+        canonical_name="company",
+        data_type="string",
+        relevance_for_spend_analysis="Medium",
+        description="Company/legal entity - MEDIUM relevance for grouping transactions by business unit",
+        common_aliases=["Company", "Company Name", "Legal Entity", "Entity", "Company Code"],
+        display_order=14,
+    ),
+    CanonicalColumn(
+        canonical_name="creation_date",
+        data_type="date",
+        relevance_for_spend_analysis="Low",
+        description="Creation date of operational transaction or accounting journal - LOW relevance for classification, used for invoice grouping",
+        common_aliases=["Creation Date of Operational Transaction or Accounting Journal", "Creation Date", "Journal Creation Date", "Transaction Creation Date"],
+        display_order=15,
+    ),
+
     # LOW relevance for analytics/reporting (not classification)
     CanonicalColumn(
         canonical_name="amount",

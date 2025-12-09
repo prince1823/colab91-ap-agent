@@ -79,6 +79,22 @@ class SpendClassificationSignature(dspy.Signature):
     - Generic accounting references: May indicate processing entries rather than spend categories - evaluate contextually
     - Supplier profile mismatch: If supplier typically provides X but transaction suggests Y, prioritize transaction context
     
+    INVOICE-LEVEL CLASSIFICATION:
+    - For invoices with multiple line items, you will be shown all line items together
+    - Return ONE classification per line item in the order provided
+    - Most line items in an invoice often share the same classification
+    - Response format options:
+      * If ALL rows get the SAME classification → Return single path: "Technology|Software|Cloud Services"
+      * If rows need DIFFERENT classifications → Return JSON list: ["path1", "path2", "path3"]
+    - For single-row transactions, use the standard single output format
+
+    TAX OVERRIDE LOGIC:
+    - If an invoice has mostly non-tax items but includes one or two tax/VAT lines, treat the tax as INCIDENTAL to the purchase
+    - In this case, classify the tax line(s) the SAME as the other purchase items, NOT as 'exceptions|government / taxes'
+    - Example: Invoice has 5 lines for 'AWS Cloud Services' and 1 line for 'Sales Tax on AWS' → Classify ALL 6 lines as 'Technology|Software|Cloud Services'
+    - However, if ALL lines are tax-related, classify as tax category
+    - The goal is to capture the business spend category, not the accounting treatment of tax
+
     GENERAL RULES:
     - NEVER return just L1 - must have L1|L2|L3 minimum
     - Prefer specific categories over "Other" when confident

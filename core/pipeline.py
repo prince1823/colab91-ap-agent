@@ -27,6 +27,7 @@ from core.agents.spend_classification import ExpertClassifier, ClassificationRes
 from core.database import ClassificationDBManager
 from core.config import get_config
 from core.utils.mlflow import setup_mlflow_tracing
+from core.utils.invoice_grouping import group_transactions_by_invoice
 
 
 class SpendClassificationPipeline:
@@ -207,6 +208,174 @@ class SpendClassificationPipeline:
         except Exception as e:
             return pos, None, {'row': df_idx, 'supplier': supplier_name, 'error': str(e)}
 
+    def _classify_invoice(
+        self,
+        invoice_key: str,
+        invoice_rows: List[Tuple[int, int, Dict]],
+        taxonomy: str,
+        run_id: str,
+        dataset_name: Optional[str] = None,
+    ) -> Tuple[Dict[int, ClassificationResult], List[Dict]]:
+        """
+        Classify all rows in an invoice together.
+
+        Steps:
+        1. Check cache for each row (may skip processing if all cached)
+        2. Context Prioritization at invoice level
+        3. Supplier Research (if needed)
+        4. Invoice-level Classification (one result per row)
+        5. Store results
+
+        Args:
+            invoice_key: Invoice identifier (for logging)
+            invoice_rows: List of (position, df_index, row_dict) tuples
+            taxonomy: Taxonomy path
+            run_id: Run ID (UUID)
+            dataset_name: Optional dataset name
+
+        Returns:
+            Tuple of (position_to_result_dict, errors_list)
+        """
+        results = {}
+        errors = []
+
+        # Extract supplier name from first row (should be same for all rows in invoice)
+        supplier_name = invoice_rows[0][2].get('supplier_name')
+        if not supplier_name or pd.isna(supplier_name):
+            for pos, df_idx, row_dict in invoice_rows:
+                errors.append({'row_index': df_idx, 'supplier_name': None, 'error': 'Missing supplier_name'})
+            return results, errors
+
+        supplier_name = str(supplier_name)
+
+        # Step 1: Check cache for each row
+        uncached_rows = []
+        for pos, df_idx, row_dict in invoice_rows:
+            if self.db_manager:
+                transaction_hash = self.db_manager.create_transaction_hash(row_dict)
+                cached_result = self.db_manager.get_by_supplier_and_hash(supplier_name, transaction_hash, run_id=run_id)
+                if cached_result:
+                    results[pos] = cached_result
+                    logger.debug(f"Cache hit for invoice row at position {pos}")
+                    continue
+            uncached_rows.append((pos, df_idx, row_dict))
+
+        # If all rows cached, we're done
+        if not uncached_rows:
+            logger.debug(f"Invoice {invoice_key}: All {len(invoice_rows)} rows cached")
+            return results, errors
+
+        logger.debug(f"Invoice {invoice_key}: {len(uncached_rows)} uncached rows (out of {len(invoice_rows)})")
+
+        # Extract transaction data for uncached rows
+        uncached_transactions = [row_dict for _, _, row_dict in uncached_rows]
+
+        # Step 2: Invoice-level Context Prioritization
+        try:
+            prioritization_decision = self.context_prioritization_agent.assess_invoice_context(
+                invoice_transactions=uncached_transactions,
+                supplier_name=supplier_name,
+                supplier_profile=None,
+            )
+        except Exception as e:
+            error_msg = f"Context prioritization failed for invoice: {e}"
+            logger.error(error_msg, exc_info=True)
+            for pos, df_idx, row_dict in uncached_rows:
+                errors.append({'row_index': df_idx, 'supplier_name': supplier_name, 'error': error_msg})
+            return results, errors
+
+        # Step 3: Supplier Research (if needed)
+        supplier_profile = None
+        if prioritization_decision.should_research:
+            cache_key = supplier_name.lower().strip()
+
+            # Check in-memory cache
+            if cache_key in self._supplier_cache:
+                supplier_profile = self._supplier_cache[cache_key]
+                logger.debug(f"Using in-memory cached research for: {supplier_name}")
+            # Check database
+            elif self.db_manager:
+                cached_profile = self.db_manager.get_supplier_profile(supplier_name, max_age_days=self.supplier_cache_max_age_days)
+                if cached_profile:
+                    supplier_profile = cached_profile
+                    self._supplier_cache[cache_key] = supplier_profile
+                    logger.debug(f"Using database-cached research for: {supplier_name}")
+
+            # Research if not found
+            if not supplier_profile:
+                # Use supplier address from first row
+                supplier_address = uncached_transactions[0].get('supplier_address')
+                supplier_address = supplier_address if (supplier_address and pd.notna(supplier_address) and str(supplier_address).strip()) else None
+                supplier_profile_obj = self.research_agent.research_supplier(
+                    supplier_name,
+                    supplier_address=supplier_address
+                )
+                supplier_profile = supplier_profile_obj.to_dict()
+                self._supplier_cache[cache_key] = supplier_profile
+                logger.debug(f"Researched and cached: {supplier_name}")
+        else:
+            # Minimal supplier profile
+            supplier_profile = {
+                'supplier_name': supplier_name,
+                'official_business_name': supplier_name,
+                'description': '',
+                'industry': 'Unknown',
+                'products_services': 'Unknown',
+                'confidence': 'low',
+                'is_large_company': False,
+            }
+
+        # Step 4: Invoice-level Classification
+        try:
+            classification_results = self.expert_classifier.classify_invoice(
+                supplier_profile=supplier_profile,
+                invoice_transactions=uncached_transactions,
+                taxonomy_yaml=taxonomy,
+                prioritization_decision=prioritization_decision,
+                dataset_name=dataset_name,
+            )
+
+            # Validate results
+            if len(classification_results) != len(uncached_rows):
+                error_msg = f"Classification returned {len(classification_results)} results for {len(uncached_rows)} rows"
+                logger.error(error_msg)
+                for pos, df_idx, row_dict in uncached_rows:
+                    errors.append({'row_index': df_idx, 'supplier_name': supplier_name, 'error': error_msg})
+                return results, errors
+
+        except Exception as e:
+            error_msg = f"Invoice classification failed for supplier {supplier_name}: {e}"
+            logger.error(error_msg, exc_info=True)
+            for pos, df_idx, row_dict in uncached_rows:
+                errors.append({'row_index': df_idx, 'supplier_name': supplier_name, 'error': error_msg})
+            return results, errors
+
+        # Step 5: Store results in database and build result dict
+        for (pos, df_idx, row_dict), result in zip(uncached_rows, classification_results):
+            # Validate result
+            if not result or not hasattr(result, 'L1') or not result.L1:
+                error_msg = f"Invalid classification result for row {df_idx}"
+                logger.warning(error_msg)
+                errors.append({'row_index': df_idx, 'supplier_name': supplier_name, 'error': error_msg})
+                continue
+
+            # Store in database
+            if self.db_manager:
+                transaction_hash = self.db_manager.create_transaction_hash(row_dict)
+                self.db_manager.store_classification(
+                    supplier_name=supplier_name,
+                    transaction_hash=transaction_hash,
+                    classification_result=result,
+                    run_id=run_id,
+                    dataset_name=dataset_name,
+                    supplier_profile=supplier_profile,
+                    transaction_data=row_dict,
+                )
+
+            results[pos] = result
+
+        return results, errors
+
     def process_transactions(
         self, df: pd.DataFrame, taxonomy_path: Optional[str] = None, return_intermediate: bool = False, max_workers: int = 1, run_id: Optional[str] = None, dataset_name: Optional[str] = None
     ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, Dict]]:
@@ -245,60 +414,43 @@ class SpendClassificationPipeline:
 
         canonical_df = self.canonicalization_agent.apply_mapping(df, mapping_result)
 
-        # Step 2: Context Prioritization - decide if research is needed for all rows
-        # Do this before parallel processing to reduce concurrent API calls
-        prioritization_decisions = {}  # Map position to PrioritizationDecision
-        for pos, (df_idx, row) in enumerate(canonical_df.iterrows()):
-            row_dict = row.to_dict()
-            supplier_name = row_dict.get('supplier_name')
-            if not supplier_name or pd.isna(supplier_name):
-                continue
-            
-            # Get prioritization decision for this row
-            decision = self.context_prioritization_agent.assess_context(
-                transaction_data=row_dict,
-                supplier_name=str(supplier_name),
-                supplier_profile=None,
-            )
-            prioritization_decisions[pos] = decision
+        # Step 2: Group transactions into invoices
+        invoices = group_transactions_by_invoice(canonical_df)
 
-        # Step 3: Classify transactions (parallel processing with multi-level caching)
-        # Initialize results list with None for all rows
+        # Step 3: Process each invoice (with multi-level caching)
         classification_results = [None] * len(canonical_df)
         errors = []
 
-        # Prepare tasks for parallel processing
-        # Use enumerate to track position in DataFrame (for list indexing)
-        tasks = []
-        for pos, (df_idx, row) in enumerate(canonical_df.iterrows()):
-            # Convert row Series to dict to preserve column names with spaces/special chars
-            row_dict = row.to_dict()
-            
-            supplier_name = row_dict.get('supplier_name')
-            if not supplier_name or pd.isna(supplier_name):
-                errors.append({'row': df_idx, 'error': 'Missing supplier_name'})
-                continue
+        for invoice_key, invoice_rows in invoices.items():
+            invoice_results, invoice_errors = self._classify_invoice(
+                invoice_key=invoice_key,
+                invoice_rows=invoice_rows,
+                taxonomy=taxonomy,
+                run_id=run_id,
+                dataset_name=dataset_name,
+            )
 
-            # Get pre-computed prioritization decision
-            prioritization_decision = prioritization_decisions.get(pos)
-            if not prioritization_decision:
-                errors.append({'row': df_idx, 'error': 'Missing prioritization decision'})
-                continue
+            # Merge results into master results list
+            for pos, result in invoice_results.items():
+                classification_results[pos] = result
 
-            # Add task for parallel processing (pos is position in DataFrame, df_idx is original index)
-            tasks.append((pos, df_idx, row_dict, str(supplier_name), taxonomy, run_id, dataset_name, prioritization_decision))
+            # Collect errors
+            errors.extend(invoice_errors)
 
-        # Process tasks sequentially (max_workers=1) to avoid rate limits
-        if tasks:
-            error_by_pos = {}  # Map position to error
-            for pos, df_idx, row_dict, supplier_name, taxonomy, run_id, dataset_name, prioritization_decision in tasks:
-                result_pos, result, error = self._classify_single_row(
-                    pos, df_idx, row_dict, supplier_name, taxonomy, run_id, dataset_name, prioritization_decision
-                )
-                classification_results[result_pos] = result
-                if error:
-                    errors.append(error)
-                    error_by_pos[result_pos] = error.get('error', str(error))
+        # Build error_by_pos mapping for compatibility with downstream code
+        error_by_pos = {}
+        for error in errors:
+            if 'row_index' in error:
+                # Convert DataFrame index to position
+                pos = canonical_df.index.get_loc(error['row_index'])
+                error_by_pos[pos] = error.get('error', str(error))
+            elif 'row' in error:
+                # Legacy format compatibility
+                try:
+                    pos = canonical_df.index.get_loc(error['row'])
+                    error_by_pos[pos] = error.get('error', str(error))
+                except KeyError:
+                    pass
 
         # Step 4: Add classification columns to DataFrame
         result_df = canonical_df.copy()

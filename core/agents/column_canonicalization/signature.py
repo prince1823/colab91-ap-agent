@@ -17,8 +17,14 @@ class ColumnCanonicalizationSignature(dspy.Signature):
     RELEVANCE LEVELS:
     - Critical: supplier, GL/line descriptions - MUST MAP
     - High: GL codes, departments - SHOULD MAP
-    - Medium: cost centers, dates, PO numbers, supplier address - MAP if available
+    - Medium: cost centers, dates (invoice_date, creation_date), PO numbers, supplier address, company - MAP if available for invoice grouping
     - Low: amounts, currency, transaction IDs - MAP if available
+
+    INVOICE GROUPING FIELDS (IMPORTANT):
+    - invoice_date (Accounting Date) - CRITICAL for invoice grouping
+    - company (Company, Legal Entity) - Important for invoice grouping
+    - creation_date (Creation Date of Operational Transaction or Accounting Journal) - Important for accurate invoice grouping
+    - These fields enable the system to group transaction rows into invoices for batch processing
     
     ADDRESS FIELD MAPPING:
     - Map ONE primary address field to supplier_address (prefer complete addresses over components)

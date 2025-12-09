@@ -42,6 +42,9 @@ class ExpertClassifier:
         self._taxonomy_cache: Dict[str, Dict] = {}
         self._cache_lock = threading.Lock()
         self._current_taxonomy: List[str] = []
+
+        # Configurable batch size for large invoices
+        self.MAX_ROWS_PER_BATCH = 15
         self.research_agent = None  # Research agent (for supplier research, not company domain context)
         self._company_context_cache: Dict[str, str] = {}  # Cache company domain context
         self._classifier = None  # ChainOfThought classifier instance
@@ -189,6 +192,115 @@ class ExpertClassifier:
                 parts.append("(Evaluate which fields provide the most relevant signals for this transaction)")
         
         return "\n".join(parts) if parts else "No transaction details available"
+
+    def _format_invoice_info(self, invoice_transactions: List[Dict]) -> str:
+        """
+        Format invoice-level transaction data from multiple line items.
+
+        Aggregates information across all rows in an invoice to provide
+        comprehensive context while highlighting shared vs. varying fields.
+
+        Args:
+            invoice_transactions: List of transaction data dictionaries
+
+        Returns:
+            Formatted string with invoice-level view
+        """
+        if not invoice_transactions:
+            return "No transaction details available"
+
+        # If single row, use existing single-row formatting
+        if len(invoice_transactions) == 1:
+            return self._format_transaction_info(invoice_transactions[0])
+
+        parts = []
+        parts.append(f"Invoice contains {len(invoice_transactions)} line items:")
+        parts.append("")
+
+        # Shared/invoice-level fields (take from first row with valid value)
+        shared_fields = []
+        for field_name, label in [
+            ('invoice_date', 'Invoice Date'),
+            ('company', 'Company'),
+            ('po_number', 'PO Number'),
+            ('department', 'Department'),
+            ('cost_center', 'Cost Center'),
+        ]:
+            value = None
+            for txn in invoice_transactions:
+                if is_valid_value(txn.get(field_name)):
+                    value = txn[field_name]
+                    break
+            if value:
+                shared_fields.append((label, value))
+
+        if shared_fields:
+            parts.append("Invoice-Level Context:")
+            for label, value in shared_fields:
+                parts.append(f"  {label}: {value}")
+            parts.append("")
+
+        # Aggregate amount
+        total_amount = 0
+        has_amount = False
+        for txn in invoice_transactions:
+            if is_valid_value(txn.get('amount')):
+                try:
+                    amount_val = float(str(txn['amount']).replace(',', ''))
+                    total_amount += amount_val
+                    has_amount = True
+                except (ValueError, TypeError):
+                    pass
+
+        if has_amount:
+            amount_str = f"${total_amount:,.2f}" if total_amount >= 1 else f"${total_amount:.2f}"
+            parts.append(f"Total Invoice Amount: {amount_str}")
+            parts.append("")
+
+        # Line items (show descriptions and GL info)
+        # Limit to MAX_ROWS_PER_BATCH (same as batch size)
+        display_transactions = invoice_transactions[:self.MAX_ROWS_PER_BATCH]
+
+        parts.append("Line Items:")
+        for idx, txn in enumerate(display_transactions, 1):
+            line_parts = [f"  Line {idx}:"]
+
+            # Line description
+            if is_valid_value(txn.get('line_description')):
+                desc = str(txn['line_description'])
+                if len(desc) > 150:
+                    desc = desc[:147] + "..."
+                line_parts.append(f"    Description: {desc}")
+
+            # GL info
+            if is_valid_value(txn.get('gl_description')):
+                gl_desc = str(txn['gl_description'])
+                if len(gl_desc) > 100:
+                    gl_desc = gl_desc[:97] + "..."
+                line_parts.append(f"    GL: {gl_desc}")
+
+            if is_valid_value(txn.get('gl_code')):
+                line_parts.append(f"    GL Code: {txn['gl_code']}")
+
+            # Amount
+            if is_valid_value(txn.get('amount')):
+                try:
+                    amt = float(str(txn['amount']).replace(',', ''))
+                    amt_str = f"${amt:,.2f}" if amt >= 1 else f"${amt:.2f}"
+                    line_parts.append(f"    Amount: {amt_str}")
+                except (ValueError, TypeError):
+                    pass
+
+            parts.append("\n".join(line_parts))
+
+        # Note if invoice was truncated (batch has more rows than display limit)
+        if len(invoice_transactions) > self.MAX_ROWS_PER_BATCH:
+            parts.append(f"  ... and {len(invoice_transactions) - self.MAX_ROWS_PER_BATCH} more line items")
+
+        parts.append("")
+        parts.append("(All line items will be classified individually based on shared invoice context)")
+
+        return "\n".join(parts)
 
     def _get_relevant_taxonomy_paths(
         self, 
@@ -546,6 +658,386 @@ class ExpertClassifier:
             reasoning=f"[{confidence}] {reasoning}",
         )
 
+    def _parse_multi_classification_response(
+        self,
+        response: str,
+        expected_count: int,
+        already_classified: List[str] = None
+    ) -> Tuple[List[str], List[Dict]]:
+        """
+        Parse JSON list response from LLM for multi-row classification.
+
+        Args:
+            response: LLM response (expected to be JSON list)
+            expected_count: Number of classifications expected
+            already_classified: List of successfully classified paths so far (for fallback)
+
+        Returns:
+            Tuple of (classification_paths, errors)
+            - classification_paths: List of classification paths (one per row)
+            - errors: List of error dictionaries with details
+
+        Two-Tier Fallback Strategy:
+        1. First fallback: Use majority classification from already_classified rows
+        2. Second fallback: Use "Unknown" if no already_classified or no majority
+        """
+        import json
+        from collections import Counter
+
+        errors = []
+
+        def get_fallback_classification():
+            """Get fallback classification using two-tier strategy."""
+            if already_classified:
+                # Find majority classification
+                counter = Counter(already_classified)
+                majority = counter.most_common(1)[0]
+                if majority[1] > 1 or len(counter) == 1:  # Clear majority or only one unique value
+                    return majority[0]
+            # Second fallback
+            return "Unknown"
+
+        # First, check if response looks like a single classification path (not JSON)
+        # This happens when LLM returns a single path for all rows (valid and common!)
+        if response and not response.strip().startswith('['):
+            # Looks like a single classification path, not a JSON list
+            # Use this path for all rows (common case: all rows get same classification)
+            if '|' in response:  # Looks like a valid taxonomy path
+                # This is valid! LLM chose to return single path for all rows
+                logger.debug(f"LLM returned single path for {expected_count} rows: {response[:100]}")
+                return [response] * expected_count, errors
+            # Otherwise, treat as invalid and use fallback
+            fallback = get_fallback_classification()
+            errors.append({
+                'error_type': 'INVALID_SINGLE_PATH',
+                'message': f'Response is not a valid taxonomy path: {response[:100]}',
+                'fallback_used': fallback,
+                'raw_response': response[:500]
+            })
+            return [fallback] * expected_count, errors
+
+        try:
+            # Try to parse as JSON
+            parsed = json.loads(response)
+
+            if not isinstance(parsed, list):
+                # Not a list - apply fallback for all
+                fallback = get_fallback_classification()
+                errors.append({
+                    'error_type': 'JSON_PARSE_FAILED',
+                    'message': f'Expected JSON list, got {type(parsed).__name__}',
+                    'fallback_used': fallback,
+                    'raw_response': response[:500]
+                })
+                return [fallback] * expected_count, errors
+
+            # Valid list
+            if len(parsed) == expected_count:
+                # Perfect match
+                return [str(p) for p in parsed], errors
+
+            elif len(parsed) < expected_count:
+                # Partial response - use what we have and fill missing with fallback
+                fallback = get_fallback_classification()
+                missing_count = expected_count - len(parsed)
+                result = [str(p) for p in parsed] + [fallback] * missing_count
+                errors.append({
+                    'error_type': 'PARTIAL_RESPONSE',
+                    'message': f'Expected {expected_count} classifications, got {len(parsed)}',
+                    'missing_count': missing_count,
+                    'fallback_used': fallback,
+                    'missing_indices': list(range(len(parsed), expected_count))
+                })
+                return result, errors
+
+            else:
+                # Too many - truncate with warning
+                result = [str(p) for p in parsed[:expected_count]]
+                errors.append({
+                    'error_type': 'RESPONSE_TOO_LONG',
+                    'message': f'Expected {expected_count} classifications, got {len(parsed)}. Truncated.',
+                    'extra_count': len(parsed) - expected_count
+                })
+                return result, errors
+
+        except json.JSONDecodeError as e:
+            # JSON parsing failed - try to extract list from response
+            fallback = get_fallback_classification()
+
+            # Try to find list-like patterns in response
+            import re
+            list_pattern = r'\[([^\]]+)\]'
+            match = re.search(list_pattern, response)
+
+            if match:
+                # Found something that looks like a list - try to parse it
+                try:
+                    list_str = match.group(0)
+                    parsed = json.loads(list_str)
+                    if isinstance(parsed, list):
+                        # Recursive call with cleaned response
+                        return self._parse_multi_classification_response(
+                            list_str, expected_count, already_classified
+                        )
+                except:
+                    pass
+
+            # Complete failure - use fallback for all
+            errors.append({
+                'error_type': 'JSON_PARSE_FAILED',
+                'message': f'Failed to parse JSON: {str(e)}',
+                'fallback_used': fallback,
+                'raw_response': response[:500]
+            })
+            return [fallback] * expected_count, errors
+
     def classify_with_tools(self, *args, **kwargs) -> ClassificationResult:
         """Alias for classify_transaction (backward compat)."""
         return self.classify_transaction(*args, **kwargs)
+
+    def classify_invoice(
+        self,
+        supplier_profile: Dict,
+        invoice_transactions: List[Dict],
+        taxonomy_yaml: Optional[str] = None,
+        prioritization_decision: Optional[PrioritizationDecision] = None,
+        dataset_name: Optional[str] = None,
+    ) -> List[ClassificationResult]:
+        """
+        Classify all transactions in an invoice together using batch processing.
+
+        For multi-row invoices, sends ALL rows to LLM in ONE call (or batches of MAX_ROWS_PER_BATCH).
+        Returns one classification per transaction row.
+
+        Args:
+            supplier_profile: Supplier profile dictionary
+            invoice_transactions: List of transaction data dictionaries (all rows in invoice)
+            taxonomy_yaml: Path to taxonomy YAML file
+            prioritization_decision: Pre-computed prioritization decision
+            dataset_name: Optional dataset name
+
+        Returns:
+            List of ClassificationResult objects (one per transaction row)
+        """
+        if not invoice_transactions:
+            return []
+
+        # For single-row invoices, use existing logic
+        if len(invoice_transactions) == 1:
+            result = self.classify_transaction(
+                supplier_profile=supplier_profile,
+                transaction_data=invoice_transactions[0],
+                taxonomy_yaml=taxonomy_yaml,
+                prioritization_decision=prioritization_decision,
+                dataset_name=dataset_name,
+            )
+            return [result]
+
+        # Multi-row invoice: batch processing
+        taxonomy_source = taxonomy_yaml or self.taxonomy_path
+        if taxonomy_source is None:
+            raise ValueError("Taxonomy path must be provided")
+
+        taxonomy_data = self.load_taxonomy(taxonomy_source)
+        taxonomy_list = taxonomy_data.get('taxonomy', [])
+        descriptions = taxonomy_data.get('taxonomy_descriptions', {})
+        self._current_taxonomy = taxonomy_list
+
+        supplier_info = self._format_supplier_info(supplier_profile)
+
+        # Aggregate transaction data for RAG search from ALL rows
+        aggregated_data = {}
+
+        # Structured fields: First valid value
+        for field in ['department', 'gl_code', 'cost_center', 'po_number']:
+            for txn in invoice_transactions:
+                if is_valid_value(txn.get(field)):
+                    aggregated_data[field] = txn[field]
+                    break
+
+        # Line descriptions: Deduplicate and take up to 5 unique values
+        line_descriptions = []
+        for txn in invoice_transactions:
+            if is_valid_value(txn.get('line_description')):
+                desc = str(txn['line_description']).strip()
+                if desc and desc not in line_descriptions:
+                    line_descriptions.append(desc)
+                    if len(line_descriptions) >= 5:
+                        break
+        if line_descriptions:
+            aggregated_data['line_description'] = ' | '.join(line_descriptions)
+
+        # GL descriptions: Deduplicate and take up to 3 unique values
+        gl_descriptions = []
+        for txn in invoice_transactions:
+            if is_valid_value(txn.get('gl_description')):
+                gl_desc = str(txn['gl_description']).strip()
+                if gl_desc and gl_desc not in gl_descriptions:
+                    gl_descriptions.append(gl_desc)
+                    if len(gl_descriptions) >= 3:
+                        break
+        if gl_descriptions:
+            aggregated_data['gl_description'] = ' | '.join(gl_descriptions)
+
+        # Get invoice-level taxonomy paths using aggregated data
+        l1_grouped_paths, similarity_scores = self._get_relevant_taxonomy_paths(
+            aggregated_data,
+            supplier_profile,
+            taxonomy_list,
+            descriptions=descriptions
+        )
+
+        taxonomy_sample = self._format_taxonomy_sample_by_l1(
+            l1_grouped_paths,
+            similarity_scores,
+            descriptions=descriptions
+        )
+
+        prioritization = prioritization_decision.prioritization_strategy if prioritization_decision else "balanced"
+        domain_context = self._extract_domain_context(
+            taxonomy_yaml or self.taxonomy_path,
+            dataset_name
+        )
+
+        # Split into batches for processing
+        results = []
+        all_classification_paths = []  # Track all successful classifications for fallback
+
+        for batch_idx in range(0, len(invoice_transactions), self.MAX_ROWS_PER_BATCH):
+            batch_transactions = invoice_transactions[batch_idx:batch_idx + self.MAX_ROWS_PER_BATCH]
+            batch_size = len(batch_transactions)
+
+            # Format all rows in batch using _format_invoice_info
+            invoice_info = self._format_invoice_info(batch_transactions)
+
+            # Use ChainOfThought for classification
+            if self._classifier is None:
+                self._classifier = dspy.ChainOfThought(SpendClassificationSignature)
+
+            try:
+                # Call LLM ONCE for entire batch
+                result = self._classifier(
+                    supplier_info=supplier_info,
+                    transaction_info=invoice_info,
+                    taxonomy_sample=taxonomy_sample,
+                    prioritization=prioritization,
+                    domain_context=domain_context,
+                )
+
+                # Get the classification response
+                classification_response = str(result.classification_path or '').strip()
+                confidence = str(getattr(result, 'confidence', 'medium') or 'medium').lower()
+                reasoning_base = str(getattr(result, 'reasoning', '') or '')
+
+                # Parse JSON list response
+                classification_paths, parse_errors = self._parse_multi_classification_response(
+                    classification_response,
+                    expected_count=batch_size,
+                    already_classified=all_classification_paths
+                )
+
+                # Log any parsing errors with raw response
+                for error in parse_errors:
+                    error_msg = f"Batch {batch_idx//self.MAX_ROWS_PER_BATCH + 1} - {error['error_type']}: {error['message']}"
+                    if 'raw_response' in error:
+                        error_msg += f"\nRaw response (first 200 chars): {error['raw_response'][:200]}"
+                    logger.warning(error_msg)
+
+            except Exception as e:
+                # LLM call failed - use fallback for all rows in batch
+                logger.error(f"Classification failed for batch {batch_idx//self.MAX_ROWS_PER_BATCH + 1}: {e}", exc_info=True)
+
+                # Apply two-tier fallback
+                fallback_path = self._get_fallback_classification(all_classification_paths)
+                classification_paths = [fallback_path] * batch_size
+                confidence = "low"
+                reasoning_base = f"LLM call failed: {e}"
+
+                logger.error(
+                    f"Batch {batch_idx//self.MAX_ROWS_PER_BATCH + 1} - LLM_CALL_FAILED: Using fallback '{fallback_path}' for {batch_size} rows"
+                )
+
+            # Process each classification in the batch
+            for transaction_data, classification_path in zip(batch_transactions, classification_paths):
+                reasoning = reasoning_base + " [Invoice-level batch processing]"
+
+                # Post-validate the classification path
+                validation_result = validate_path(classification_path, taxonomy_list)
+
+                if not validation_result.get('valid', False):
+                    similar_paths = validation_result.get('similar_paths', [])
+                    if similar_paths:
+                        classification_path = similar_paths[0]
+                        reasoning += f" [Corrected to valid path: {classification_path}]"
+                    else:
+                        # Fallback to most similar path from pre-search
+                        if l1_grouped_paths:
+                            all_presearched = []
+                            for paths in l1_grouped_paths.values():
+                                all_presearched.extend(paths)
+
+                            if all_presearched:
+                                best_path = max(all_presearched, key=lambda p: similarity_scores.get(p, 0))
+                                classification_path = best_path
+                                reasoning += f" [Invalid path corrected using pre-search results: {classification_path}]"
+                            else:
+                                classification_path = "Unknown"
+                                reasoning += " [Invalid path, no similar paths found]"
+                        else:
+                            classification_path = "Unknown"
+                            reasoning += " [Invalid path, no similar paths found]"
+
+                # Validate minimum depth (expand L1-only results)
+                if classification_path and "|" not in classification_path and classification_path != "Unknown":
+                    l1_category = classification_path
+                    l1_paths = [p for p in taxonomy_list if p.startswith(l1_category + "|")]
+
+                    if l1_paths:
+                        query_parts = []
+                        if is_valid_value(transaction_data.get('line_description')):
+                            query_parts.append(str(transaction_data['line_description']))
+                        if is_valid_value(transaction_data.get('gl_description')):
+                            query_parts.append(str(transaction_data['gl_description']))
+
+                        if query_parts:
+                            query = " ".join(query_parts[:2])
+                            matches = lookup_paths(str(query), l1_paths)
+                            if matches:
+                                classification_path = matches[0]
+                                reasoning += f" [Auto-expanded from L1 to: {classification_path}]"
+                            else:
+                                classification_path = l1_paths[0]
+                                reasoning += f" [Auto-expanded from L1 to: {classification_path}]"
+                        else:
+                            classification_path = l1_paths[0]
+                            reasoning += f" [Auto-expanded from L1 to: {classification_path}]"
+
+                # Track successful classification for future fallback
+                if classification_path != "Unknown":
+                    all_classification_paths.append(classification_path)
+
+                result_obj = self._path_to_result(classification_path, confidence, reasoning)
+                results.append(result_obj)
+
+        return results
+
+    def _get_fallback_classification(self, already_classified: List[str]) -> str:
+        """
+        Get fallback classification using two-tier strategy.
+
+        Args:
+            already_classified: List of successfully classified paths
+
+        Returns:
+            Fallback classification path
+        """
+        from collections import Counter
+
+        if already_classified:
+            # Find majority classification
+            counter = Counter(already_classified)
+            majority = counter.most_common(1)[0]
+            if majority[1] > 1 or len(counter) == 1:  # Clear majority or only one unique value
+                return majority[0]
+        # Second fallback
+        return "Unknown"

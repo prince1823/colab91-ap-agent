@@ -4,7 +4,7 @@ import json
 import logging
 import threading
 from pathlib import Path
-from typing import Dict, Optional, Any, Union
+from typing import Dict, Optional, Any, Union, List
 
 import dspy
 import yaml
@@ -388,4 +388,84 @@ class ContextPrioritizationAgent:
                 transaction_data_quality=transaction_quality,
                 reasoning=reasoning_fallback
             )
+
+    def assess_invoice_context(
+        self,
+        invoice_transactions: List[Dict[str, Any]],
+        supplier_name: Optional[str] = None,
+        supplier_profile: Optional[Dict[str, Any]] = None,
+    ) -> PrioritizationDecision:
+        """
+        Assess context for an entire invoice (multiple transaction rows).
+
+        Aggregates signals across all rows in the invoice for a single prioritization decision.
+
+        Args:
+            invoice_transactions: List of transaction data dictionaries
+            supplier_name: Optional supplier name
+            supplier_profile: Optional supplier profile dict
+
+        Returns:
+            PrioritizationDecision for the entire invoice
+        """
+        if not invoice_transactions:
+            raise ValueError("Invoice must contain at least one transaction")
+
+        # For single-row invoices, use existing logic
+        if len(invoice_transactions) == 1:
+            return self.assess_context(
+                transaction_data=invoice_transactions[0],
+                supplier_name=supplier_name,
+                supplier_profile=supplier_profile,
+            )
+
+        # Multi-row invoice: create aggregated view
+        # Aggregate transaction data: use first non-empty value for structured fields,
+        # concatenate descriptions
+        aggregated_data = {}
+
+        # Structured fields: take first valid value
+        for field in ['department', 'gl_code', 'cost_center', 'po_number', 'invoice_date', 'amount']:
+            for txn in invoice_transactions:
+                if is_valid_value(txn.get(field)):
+                    aggregated_data[field] = txn[field]
+                    break
+
+        # Aggregate descriptions (combine all unique descriptions)
+        line_descriptions = []
+        gl_descriptions = []
+        for txn in invoice_transactions:
+            if is_valid_value(txn.get('line_description')):
+                desc = str(txn['line_description']).strip()
+                if desc and desc not in line_descriptions:
+                    line_descriptions.append(desc)
+                    if len(line_descriptions) >= 5:  # Limit to 5
+                        break
+            if is_valid_value(txn.get('gl_description')):
+                gl_desc = str(txn['gl_description']).strip()
+                if gl_desc and gl_desc not in gl_descriptions:
+                    gl_descriptions.append(gl_desc)
+                    if len(gl_descriptions) >= 3:  # Limit to 3
+                        break
+
+        # Combine descriptions (limit to avoid excessive token usage)
+        if line_descriptions:
+            aggregated_data['line_description'] = ' | '.join(line_descriptions)
+        if gl_descriptions:
+            aggregated_data['gl_description'] = ' | '.join(gl_descriptions)
+
+        # Add invoice metadata
+        aggregated_data['_invoice_line_count'] = len(invoice_transactions)
+
+        # Use standard assess_context with aggregated data
+        decision = self.assess_context(
+            transaction_data=aggregated_data,
+            supplier_name=supplier_name,
+            supplier_profile=supplier_profile,
+        )
+
+        # Update reasoning to note invoice-level assessment
+        decision.reasoning += f" [Invoice-level assessment: {len(invoice_transactions)} line items]"
+
+        return decision
 
