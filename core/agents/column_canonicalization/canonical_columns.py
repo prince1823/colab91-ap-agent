@@ -157,6 +157,26 @@ def get_canonical_columns_for_prompt() -> List[dict]:
     return [col.to_dict() for col in CANONICAL_COLUMNS]
 
 
+def get_canonical_columns_metadata() -> List[dict]:
+    """
+    Get canonical column metadata for UI/configuration use.
+    
+    Returns:
+        List of dictionaries with canonical column details.
+    """
+    return [
+        {
+            "canonical_name": col.canonical_name,
+            "data_type": col.data_type,
+            "description": col.description,
+            "relevance_for_spend_analysis": col.relevance_for_spend_analysis,
+            "common_aliases": col.common_aliases,
+            "display_order": col.display_order,
+        }
+        for col in sorted(CANONICAL_COLUMNS, key=lambda c: c.display_order)
+    ]
+
+
 def get_columns_by_relevance(relevance: str) -> List[str]:
     """
     Get canonical columns by relevance level

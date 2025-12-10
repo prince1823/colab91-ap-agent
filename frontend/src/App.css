@@ -1,0 +1,72 @@
+/* Component-specific overrides (kept minimal) */
+
+.ag-theme-alpine .ag-header-cell-label {
+  white-space: nowrap;
+}
+
+.ag-theme-alpine .ag-cell {
+  line-height: 1.4;
+}
+/* Additional component-specific styles */
+
+.override-panel {
+  background: #f8f9fa;
+  border: 1px solid #e1e4e8;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.override-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.override-helper {
+  color: #555;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.override-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.override-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+
+.override-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.override-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.override-meta {
+  color: #6c757d;
+  font-size: 12px;
+}
+
+.override-row input {
+  padding: 8px 10px;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 14px;
+}
+

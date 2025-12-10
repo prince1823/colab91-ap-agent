@@ -76,7 +76,12 @@ class SpendClassificationPipeline:
             return idx, None, {'row': idx, 'supplier': supplier_name, 'error': str(e)}
 
     def process_transactions(
-        self, df: pd.DataFrame, taxonomy_path: Optional[str] = None, return_intermediate: bool = False, max_workers: int = 5
+        self,
+        df: pd.DataFrame,
+        taxonomy_path: Optional[str] = None,
+        return_intermediate: bool = False,
+        max_workers: int = 5,
+        normalized_column_overrides: Optional[Dict[str, str]] = None,
     ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, Dict]]:
         """
         Process transactions through the full pipeline
@@ -198,6 +203,27 @@ class SpendClassificationPipeline:
 
         # Store errors as attribute for inspection
         result_df.attrs['classification_errors'] = errors
+
+        # Apply optional normalized column overrides for output display
+        if normalized_column_overrides:
+            safe_overrides = {
+                col: new_name.strip()
+                for col, new_name in normalized_column_overrides.items()
+                if col in result_df.columns and isinstance(new_name, str) and new_name.strip()
+            }
+            if safe_overrides:
+                # Avoid accidental duplicate target names by preserving originals on conflict
+                target_names = set()
+                rename_map: Dict[str, str] = {}
+                for canonical_col, new_name in safe_overrides.items():
+                    if new_name in target_names:
+                        continue
+                    target_names.add(new_name)
+                    rename_map[canonical_col] = new_name
+                if rename_map:
+                    result_df = result_df.rename(columns=rename_map)
+                    # Preserve attached metadata after rename
+                    result_df.attrs['classification_errors'] = errors
 
         if return_intermediate:
             intermediate = {
