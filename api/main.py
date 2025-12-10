@@ -33,6 +33,30 @@ FEEDBACK_DIR = Path("feedback")
 FEEDBACK_DIR.mkdir(exist_ok=True)
 RESULTS_DIR = Path("results")
 RESULTS_DIR.mkdir(exist_ok=True)
+NORMALIZED_OVERRIDES_FILE = Path("normalized_column_overrides.json")
+
+
+def load_saved_overrides() -> Dict[str, str]:
+    """Load normalized column overrides from disk."""
+    if not NORMALIZED_OVERRIDES_FILE.exists():
+        return {}
+    try:
+        with NORMALIZED_OVERRIDES_FILE.open("r") as f:
+            data = json.load(f)
+        return {
+            col: name
+            for col, name in data.items()
+            if isinstance(col, str) and isinstance(name, str) and name.strip()
+        }
+    except Exception:
+        # On any read/parse error, fall back to defaults without raising
+        return {}
+
+
+def save_overrides(overrides: Dict[str, str]) -> None:
+    """Persist normalized column overrides to disk."""
+    with NORMALIZED_OVERRIDES_FILE.open("w") as f:
+        json.dump(overrides, f, indent=2)
 
 
 # Pydantic models
@@ -65,6 +89,11 @@ class RunRequest(BaseModel):
     iteration: Optional[int] = None
     use_feedback: bool = True
     normalized_column_overrides: Optional[Dict[str, str]] = None
+
+
+class NormalizedColumnOverrides(BaseModel):
+    """Overrides for canonical/normalized column display names."""
+    overrides: Dict[str, str]
 
 
 class ResultFile(BaseModel):
@@ -341,7 +370,47 @@ async def run_pipeline(request: RunRequest):
 @app.get("/api/canonical-columns")
 async def list_canonical_columns():
     """List canonical columns and metadata for column normalization UI."""
-    return {"columns": get_canonical_columns_metadata()}
+    columns = get_canonical_columns_metadata()
+    saved_overrides = load_saved_overrides()
+    resolved_overrides = {
+        col["canonical_name"]: saved_overrides.get(col["canonical_name"], col["canonical_name"])
+        for col in columns
+    }
+    return {"columns": columns, "overrides": resolved_overrides}
+
+
+@app.get("/api/normalized-column-overrides")
+async def get_normalized_column_overrides():
+    """Return canonical column metadata with any saved normalized name overrides."""
+    columns = get_canonical_columns_metadata()
+    saved_overrides = load_saved_overrides()
+    resolved_overrides = {
+        col["canonical_name"]: saved_overrides.get(col["canonical_name"], col["canonical_name"])
+        for col in columns
+    }
+    return {"columns": columns, "overrides": resolved_overrides}
+
+
+@app.post("/api/normalized-column-overrides")
+async def update_normalized_column_overrides(payload: NormalizedColumnOverrides):
+    """Persist normalized column name overrides for reuse across sessions."""
+    columns = get_canonical_columns_metadata()
+    valid_columns = {col["canonical_name"] for col in columns}
+
+    cleaned_overrides = {}
+    for canonical_name in valid_columns:
+        incoming_value = payload.overrides.get(canonical_name)
+        if isinstance(incoming_value, str) and incoming_value.strip():
+            cleaned_overrides[canonical_name] = incoming_value.strip()
+        else:
+            cleaned_overrides[canonical_name] = canonical_name
+
+    try:
+        save_overrides(cleaned_overrides)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to save overrides: {str(exc)}")
+
+    return {"status": "success", "overrides": cleaned_overrides}
 
 
 def load_feedback_examples(input_file: str, max_iteration: int) -> List[Dict]:

@@ -31,6 +31,12 @@
   margin-top: 4px;
 }
 
+.override-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .override-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));

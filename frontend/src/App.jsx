@@ -27,12 +27,13 @@ function App() {
   })
   const [canonicalColumns, setCanonicalColumns] = useState([])
   const [columnOverrides, setColumnOverrides] = useState({})
+  const [savingOverrides, setSavingOverrides] = useState(false)
 
   // Load result files on mount
   useEffect(() => {
     loadResultFiles()
     loadCanonicalColumns()
-  }, [])
+  }, [loadCanonicalColumns])
 
   // Load results when file is selected
   useEffect(() => {
@@ -55,24 +56,39 @@ function App() {
     }
   }
 
-  const loadCanonicalColumns = async () => {
-    try {
-      const response = await axios.get(`${API_BASE}/canonical-columns`)
-      const cols = response.data.columns || []
-      setCanonicalColumns(cols)
-      setColumnOverrides((prev) => {
-        const next = { ...prev }
-        cols.forEach((col) => {
-          if (!next[col.canonical_name]) {
-            next[col.canonical_name] = col.canonical_name
-          }
-        })
-        return next
+  const syncCanonicalColumns = useCallback((cols, overridesFromServer = {}) => {
+    setCanonicalColumns(cols)
+    setColumnOverrides((prev) => {
+      const next = { ...prev }
+      cols.forEach((col) => {
+        const incoming = overridesFromServer[col.canonical_name]
+        if (typeof incoming === 'string' && incoming.trim()) {
+          next[col.canonical_name] = incoming.trim()
+        } else if (!next[col.canonical_name]) {
+          next[col.canonical_name] = col.canonical_name
+        }
       })
-    } catch (err) {
-      setError(`Failed to load canonical columns: ${err.message}`)
+      return next
+    })
+  }, [])
+
+  const loadCanonicalColumns = useCallback(async () => {
+    try {
+      const response = await axios.get(`${API_BASE}/normalized-column-overrides`)
+      const cols = response.data.columns || []
+      const overridesFromServer = response.data.overrides || {}
+      syncCanonicalColumns(cols, overridesFromServer)
+    } catch (primaryErr) {
+      try {
+        const response = await axios.get(`${API_BASE}/canonical-columns`)
+        const cols = response.data.columns || []
+        const overridesFromServer = response.data.overrides || {}
+        syncCanonicalColumns(cols, overridesFromServer)
+      } catch (fallbackErr) {
+        setError(`Failed to load canonical columns: ${fallbackErr.message || fallbackErr}`)
+      }
     }
-  }
+  }, [syncCanonicalColumns])
 
   const [pageOffset, setPageOffset] = useState(0)
   const pageLimit = 500
@@ -199,10 +215,18 @@ function App() {
 
   const columnDefs = useMemo(() => {
     if (results.length === 0) return []
-    
+
+    const toHeader = (key) => {
+      const overrideName = columnOverrides[key]
+      if (overrideName && typeof overrideName === 'string' && overrideName.trim()) {
+        return overrideName.trim()
+      }
+      return key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+    }
+
     const cols = Object.keys(results[0]).map(key => ({
       field: key,
-      headerName: key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+      headerName: toHeader(key),
       sortable: true,
       filter: true,
       resizable: true,
@@ -224,7 +248,7 @@ function App() {
       },
       ...cols,
     ]
-  }, [results])
+  }, [results, columnOverrides])
 
   const defaultColDef = useMemo(() => ({
     sortable: true,
@@ -275,6 +299,25 @@ function App() {
       })
       return next
     })
+  }
+
+  const handleSaveOverrides = async () => {
+    setSavingOverrides(true)
+    try {
+      const payload = {}
+      canonicalColumns.forEach((col) => {
+        const value = columnOverrides[col.canonical_name]
+        payload[col.canonical_name] = value && value.trim() ? value.trim() : col.canonical_name
+      })
+
+      await axios.post(`${API_BASE}/normalized-column-overrides`, { overrides: payload })
+      setSuccess('Normalized column names saved')
+      setTimeout(() => setSuccess(null), 4000)
+    } catch (err) {
+      setError(`Failed to save normalized column names: ${err.message}`)
+    } finally {
+      setSavingOverrides(false)
+    }
   }
 
   const rowData = useMemo(() => results, [results])
@@ -340,9 +383,14 @@ function App() {
                 Adjust how canonicalized columns are labeled in the output. Leave blank to use defaults.
               </div>
             </div>
-            <button className="btn btn-secondary" onClick={resetOverrides}>
-              Reset to defaults
-            </button>
+            <div className="override-actions">
+              <button className="btn btn-secondary" onClick={resetOverrides}>
+                Reset to defaults
+              </button>
+              <button className="btn btn-primary" onClick={handleSaveOverrides} disabled={savingOverrides}>
+                {savingOverrides ? 'Saving...' : 'Save normalized names'}
+              </button>
+            </div>
           </div>
           <div className="override-grid">
             {canonicalColumns.map((col) => (
