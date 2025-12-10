@@ -29,21 +29,6 @@ function App() {
   const [columnOverrides, setColumnOverrides] = useState({})
   const [savingOverrides, setSavingOverrides] = useState(false)
 
-  // Load result files on mount
-  useEffect(() => {
-    loadResultFiles()
-    loadCanonicalColumns()
-  }, [loadCanonicalColumns])
-
-  // Load results when file is selected
-  useEffect(() => {
-    if (selectedFile) {
-      loadResults(selectedFile)
-      loadFeedback(selectedFile)
-      extractIteration(selectedFile)
-    }
-  }, [selectedFile])
-
   const loadResultFiles = async () => {
     try {
       const response = await axios.get(`${API_BASE}/results`)
@@ -89,6 +74,21 @@ function App() {
       }
     }
   }, [syncCanonicalColumns])
+
+  // Load result files on mount
+  useEffect(() => {
+    loadResultFiles()
+    loadCanonicalColumns()
+  }, [loadCanonicalColumns])
+
+  // Load results when file is selected
+  useEffect(() => {
+    if (selectedFile) {
+      loadResults(selectedFile)
+      loadFeedback(selectedFile)
+      extractIteration(selectedFile)
+    }
+  }, [selectedFile])
 
   const [pageOffset, setPageOffset] = useState(0)
   const pageLimit = 500
