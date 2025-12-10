@@ -44,7 +44,7 @@ class ExpertClassifier:
         self._current_taxonomy: List[str] = []
 
         # Configurable batch size for large invoices
-        self.MAX_ROWS_PER_BATCH = 15
+        self.MAX_ROWS_PER_BATCH = 50
         self.research_agent = None  # Research agent (for supplier research, not company domain context)
         self._company_context_cache: Dict[str, str] = {}  # Cache company domain context
         self._classifier = None  # ChainOfThought classifier instance
