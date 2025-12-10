@@ -2,13 +2,61 @@
 
 ## Overview
 
-Transactions are now processed **by invoice** rather than row-by-row, reducing API calls by ~70-90% while improving accuracy through richer shared context.
+Transactions are now processed **by invoice** rather than row-by-row, improving accuracy through richer shared context.
 
 **Impact:**
 - ✅ Better accuracy from shared invoice context
-- ✅ ~70-90% fewer API calls (1 per invoice vs 1 per row)
 - ✅ Same output structure (L1-L5 per row)
 - ✅ Fully backward compatible
+
+---
+
+## High-Level Flow
+
+The system processes transactions at the invoice level, grouping related rows together before classification:
+
+```
+1. Input Data
+   └─> Raw transaction rows with invoice metadata
+
+2. Column Canonicalization
+   └─> Maps client-specific columns to standard names
+   └─> Ensures required columns: invoice_date, company, supplier_name, creation_date
+
+3. Invoice Grouping
+   └─> Groups rows by invoice (same date, company, supplier, creation_date)
+   └─> Each group = one invoice to process
+
+4. For Each Invoice:
+   ├─> Cache Check
+   │   └─> If all rows cached → skip entire invoice
+   │   └─> If partial cache → return cached, process uncached together
+   │
+   ├─> Context Prioritization
+   │   └─> Single assessment per invoice (not per row)
+   │   └─> Determines which context sources to use
+   │
+   ├─> Supplier Research
+   │   └─> One lookup per supplier (cached across invoices)
+   │
+   ├─> RAG Search
+   │   └─> Aggregates all row data from invoice
+   │   └─> One search per invoice using rich context
+   │
+   ├─> Batch Classification
+   │   ├─> 1 row: Use existing single-row logic
+   │   ├─> 2-15 rows: One LLM call for entire invoice
+   │   └─> >15 rows: Process in batches of 15
+   │
+   └─> Store Results
+       └─> Cache each row's classification
+
+5. Build Output
+   └─> Add L1-L5 classification columns to each row
+   └─> Maintains same output structure as before
+```
+
+**Key Insight:** All rows in an invoice share the same context (supplier, date, company), so processing them together provides richer information for more accurate classification.
 
 ---
 
@@ -143,20 +191,9 @@ Example: 5 AWS lines + 1 tax line → All 6 = "Technology|Software|Cloud Service
 
 ---
 
-## Performance
+## Performance Considerations
 
-**API Call Reduction:**
-
-| Operation | Before | After | Savings |
-|-----------|--------|-------|---------|
-| Context Prioritization | 1/row | 1/invoice | ~70-90% |
-| Supplier Research | 1/supplier (cached) | Same | - |
-| Classification | 1/row | 1/batch | Varies |
-
-**Example (1000 rows, 4 rows/invoice avg):**
-- Before: 1000 prioritization calls
-- After: 250 prioritization calls
-- **75% reduction**
+The invoice-level approach processes multiple rows together, which can reduce the number of API calls needed. The exact reduction depends on invoice size and grouping patterns.
 
 **Memory:** ~500KB for 1000 rows (negligible)
 
@@ -181,9 +218,8 @@ INFO: Grouped 1000 rows into 247 invoices (avg 4.0 rows/invoice)
 DEBUG: LLM returned single path for 3 rows: Technology|Software...
 ```
 
-**Performance Tuning:**
+**Tuning:**
 - Consider increasing `MAX_ROWS_PER_BATCH` (currently 15) for larger invoices if token limits allow
-- Higher values = fewer API calls but larger prompts
 - Monitor token usage and classification quality when adjusting
 
 ---
