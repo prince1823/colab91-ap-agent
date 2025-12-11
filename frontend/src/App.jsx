@@ -28,7 +28,7 @@ function App() {
   const [canonicalColumns, setCanonicalColumns] = useState([])
   const [columnOverrides, setColumnOverrides] = useState({})
   const [savingOverrides, setSavingOverrides] = useState(false)
-  const [rightConfirmation, setRightConfirmation] = useState(false)
+  const [rightMarks, setRightMarks] = useState({})
 
   const loadResultFiles = async () => {
     try {
@@ -156,7 +156,6 @@ function App() {
       setError('Please select at least one row to provide feedback')
       return
     }
-    setRightConfirmation(false)
     setFeedbackModal({
       rows: selectedRows,
       filename: selectedFile,
@@ -164,18 +163,23 @@ function App() {
     })
   }
 
-  const handleMarkRight = () => {
-    if (selectedRows.length === 0) {
-      setError('Please select at least one row to confirm as right')
-      return
-    }
-    setFeedbackModal(null)
-    setRightConfirmation(true)
-  }
+  const openFeedbackForRow = useCallback((row) => {
+    if (!row) return
+    setFeedbackModal({
+      rows: [row],
+      filename: selectedFile,
+      iteration: iteration - 1, // Current iteration
+    })
+  }, [selectedFile, iteration])
 
-  const handleMarkWrong = () => {
-    handleOpenFeedback()
-  }
+  const handleMarkRightRow = useCallback((key) => {
+    setRightMarks((prev) => ({ ...prev, [key]: true }))
+  }, [])
+
+  const handleMarkWrongRow = useCallback((row, key) => {
+    setRightMarks((prev) => ({ ...prev, [key]: false }))
+    openFeedbackForRow(row)
+  }, [openFeedbackForRow])
 
   const handleSubmitFeedback = async (feedbackData) => {
     try {
@@ -248,6 +252,41 @@ function App() {
       minWidth: 140,
     }))
 
+    const correctColumn = {
+      colId: '__correct__',
+      headerName: 'Correct',
+      width: 140,
+      pinned: 'left',
+      resizable: false,
+      sortable: false,
+      filter: false,
+      cellRenderer: (params) => {
+        const key = params.node.id
+        const isRight = rightMarks[key]
+        const onRight = () => handleMarkRightRow(key)
+        const onWrong = () => handleMarkWrongRow(params.data, key)
+        return (
+          <div className="correct-cell">
+            {isRight ? (
+              <label className="right-check-inline">
+                <input type="checkbox" checked readOnly />
+                <span>Right</span>
+              </label>
+            ) : (
+              <div className="correct-actions">
+                <button type="button" className="correct-btn right" onClick={onRight} aria-label="Mark Right">
+                  ✓
+                </button>
+                <button type="button" className="correct-btn wrong" onClick={onWrong} aria-label="Mark Wrong">
+                  ✕
+                </button>
+              </div>
+            )}
+          </div>
+        )
+      },
+    }
+
     // Add a selection checkbox column to make row selection obvious
     return [
       {
@@ -261,9 +300,10 @@ function App() {
         sortable: false,
         filter: false,
       },
+      correctColumn,
       ...cols,
     ]
-  }, [results, columnOverrides])
+  }, [results, columnOverrides, rightMarks, handleMarkRightRow, handleMarkWrongRow])
 
   const defaultColDef = useMemo(() => ({
     sortable: true,
@@ -297,8 +337,11 @@ function App() {
   const onSelectionChanged = useCallback((event) => {
     const selected = event.api.getSelectedRows()
     setSelectedRows(selected)
-    setRightConfirmation(false)
   }, [])
+
+  useEffect(() => {
+    setRightMarks({})
+  }, [results])
 
   const handleOverrideChange = (canonicalName, value) => {
     setColumnOverrides((prev) => ({
@@ -375,25 +418,6 @@ function App() {
         <div className="control-group">
           <label>Selected Rows</label>
           <input type="text" value={selectedRows.length} readOnly style={{ width: '80px' }} />
-        </div>
-
-        <div className="decision-columns">
-          <button
-            type="button"
-            className="decision-card right"
-            onClick={handleMarkRight}
-            disabled={selectedRows.length === 0}
-          >
-            ✓ Right
-          </button>
-          <button
-            type="button"
-            className="decision-card wrong"
-            onClick={handleMarkWrong}
-            disabled={selectedRows.length === 0}
-          >
-            ✕ Wrong
-          </button>
         </div>
 
         <button className="btn btn-success" onClick={handleRunWithFeedback} disabled={!selectedFile || loading}>
@@ -509,12 +533,6 @@ function App() {
                 >
                   {loading ? 'Loading...' : `Load next ${pageLimit} rows`}
                 </button>
-              </div>
-            )}
-            {rightConfirmation && (
-              <div className="right-check">
-                <input type="checkbox" checked readOnly />
-                <span>Marked as Right</span>
               </div>
             )}
           </>
