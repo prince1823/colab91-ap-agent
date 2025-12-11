@@ -28,6 +28,7 @@ function App() {
   const [canonicalColumns, setCanonicalColumns] = useState([])
   const [columnOverrides, setColumnOverrides] = useState({})
   const [savingOverrides, setSavingOverrides] = useState(false)
+  const [rightConfirmation, setRightConfirmation] = useState(false)
 
   const loadResultFiles = async () => {
     try {
@@ -155,11 +156,25 @@ function App() {
       setError('Please select at least one row to provide feedback')
       return
     }
+    setRightConfirmation(false)
     setFeedbackModal({
       rows: selectedRows,
       filename: selectedFile,
       iteration: iteration - 1, // Current iteration
     })
+  }
+
+  const handleMarkRight = () => {
+    if (selectedRows.length === 0) {
+      setError('Please select at least one row to confirm as right')
+      return
+    }
+    setFeedbackModal(null)
+    setRightConfirmation(true)
+  }
+
+  const handleMarkWrong = () => {
+    handleOpenFeedback()
   }
 
   const handleSubmitFeedback = async (feedbackData) => {
@@ -282,6 +297,7 @@ function App() {
   const onSelectionChanged = useCallback((event) => {
     const selected = event.api.getSelectedRows()
     setSelectedRows(selected)
+    setRightConfirmation(false)
   }, [])
 
   const handleOverrideChange = (canonicalName, value) => {
@@ -361,9 +377,24 @@ function App() {
           <input type="text" value={selectedRows.length} readOnly style={{ width: '80px' }} />
         </div>
 
-        <button className="btn btn-primary" onClick={handleOpenFeedback} disabled={selectedRows.length === 0}>
-          Provide Feedback ({selectedRows.length})
-        </button>
+        <div className="decision-columns">
+          <button
+            type="button"
+            className="decision-card right"
+            onClick={handleMarkRight}
+            disabled={selectedRows.length === 0}
+          >
+            ✓ Right
+          </button>
+          <button
+            type="button"
+            className="decision-card wrong"
+            onClick={handleMarkWrong}
+            disabled={selectedRows.length === 0}
+          >
+            ✕ Wrong
+          </button>
+        </div>
 
         <button className="btn btn-success" onClick={handleRunWithFeedback} disabled={!selectedFile || loading}>
           {loading ? 'Running...' : `Run Next Iteration (${iteration})`}
@@ -478,6 +509,12 @@ function App() {
                 >
                   {loading ? 'Loading...' : `Load next ${pageLimit} rows`}
                 </button>
+              </div>
+            )}
+            {rightConfirmation && (
+              <div className="right-check">
+                <input type="checkbox" checked readOnly />
+                <span>Marked as Right</span>
               </div>
             )}
           </>

@@ -76,3 +76,56 @@
   font-size: 14px;
 }
 
+.decision-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  align-items: center;
+}
+
+.decision-card {
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-weight: 600;
+  border: 1px solid #dfe3e8;
+  background: #f8f9fa;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.decision-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.decision-card.right {
+  border-color: #4caf50;
+  color: #2e7d32;
+}
+
+.decision-card.right:not(:disabled):hover {
+  background: #e8f5e9;
+}
+
+.decision-card.wrong {
+  border-color: #e53935;
+  color: #b71c1c;
+}
+
+.decision-card.wrong:not(:disabled):hover {
+  background: #fdecea;
+}
+
+.right-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid #4caf50;
+  background: #f1fff2;
+  color: #2e7d32;
+  font-weight: 600;
+}
+
