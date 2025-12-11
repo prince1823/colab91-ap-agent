@@ -5,7 +5,7 @@ function FeedbackModal({ modal, onClose, onSubmit }) {
     return modal.rows.map((row, idx) => ({
       transaction_id: row.supplier_name || `row_${idx}`,
       row_index: idx,
-      feedback_type: 'correction',
+      feedback_type: 'correct',
       corrected_l1: row.L1 || '',
       corrected_l2: row.L2 || '',
       corrected_l3: row.L3 || '',
@@ -54,6 +54,8 @@ function FeedbackModal({ modal, onClose, onSubmit }) {
                   value={item.feedback_type}
                   onChange={(e) => updateFeedbackItem(idx, 'feedback_type', e.target.value)}
                 >
+                  <option value="correct">Correct</option>
+                  <option value="incorrect">Incorrect</option>
                   <option value="correction">Correction Needed</option>
                 </select>
               </div>
@@ -109,11 +111,11 @@ function FeedbackModal({ modal, onClose, onSubmit }) {
               )}
 
               <div className="form-group">
-                <label>Your Approach for classification</label>
+                <label>Your approach for classification (used to improve the system)</label>
                 <textarea
                   value={item.comment}
                   onChange={(e) => updateFeedbackItem(idx, 'comment', e.target.value)}
-                  placeholder="Additional notes about this classification..."
+                  placeholder="Describe how you approached this classification so we can improve the system."
                 />
               </div>
             </div>
