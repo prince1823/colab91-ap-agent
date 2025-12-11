@@ -28,7 +28,6 @@ function App() {
   const [canonicalColumns, setCanonicalColumns] = useState([])
   const [columnOverrides, setColumnOverrides] = useState({})
   const [savingOverrides, setSavingOverrides] = useState(false)
-  const [rightMarks, setRightMarks] = useState({})
 
   const loadResultFiles = async () => {
     try {
@@ -163,24 +162,6 @@ function App() {
     })
   }
 
-  const openFeedbackForRow = useCallback((row) => {
-    if (!row) return
-    setFeedbackModal({
-      rows: [row],
-      filename: selectedFile,
-      iteration: iteration - 1, // Current iteration
-    })
-  }, [selectedFile, iteration])
-
-  const handleMarkRightRow = useCallback((key) => {
-    setRightMarks((prev) => ({ ...prev, [key]: true }))
-  }, [])
-
-  const handleMarkWrongRow = useCallback((row, key) => {
-    setRightMarks((prev) => ({ ...prev, [key]: false }))
-    openFeedbackForRow(row)
-  }, [openFeedbackForRow])
-
   const handleSubmitFeedback = async (feedbackData) => {
     try {
       const response = await axios.post(`${API_BASE}/feedback`, feedbackData)
@@ -252,41 +233,6 @@ function App() {
       minWidth: 140,
     }))
 
-    const correctColumn = {
-      colId: '__correct__',
-      headerName: 'Correct',
-      width: 140,
-      pinned: 'left',
-      resizable: false,
-      sortable: false,
-      filter: false,
-      cellRenderer: (params) => {
-        const key = params.node.id
-        const isRight = rightMarks[key]
-        const onRight = () => handleMarkRightRow(key)
-        const onWrong = () => handleMarkWrongRow(params.data, key)
-        return (
-          <div className="correct-cell">
-            {isRight ? (
-              <label className="right-check-inline">
-                <input type="checkbox" checked readOnly />
-                <span>Right</span>
-              </label>
-            ) : (
-              <div className="correct-actions">
-                <button type="button" className="correct-btn right" onClick={onRight} aria-label="Mark Right">
-                  ✓
-                </button>
-                <button type="button" className="correct-btn wrong" onClick={onWrong} aria-label="Mark Wrong">
-                  ✕
-                </button>
-              </div>
-            )}
-          </div>
-        )
-      },
-    }
-
     // Add a selection checkbox column to make row selection obvious
     return [
       {
@@ -300,10 +246,9 @@ function App() {
         sortable: false,
         filter: false,
       },
-      correctColumn,
       ...cols,
     ]
-  }, [results, columnOverrides, rightMarks, handleMarkRightRow, handleMarkWrongRow])
+  }, [results, columnOverrides])
 
   const defaultColDef = useMemo(() => ({
     sortable: true,
@@ -338,10 +283,6 @@ function App() {
     const selected = event.api.getSelectedRows()
     setSelectedRows(selected)
   }, [])
-
-  useEffect(() => {
-    setRightMarks({})
-  }, [results])
 
   const handleOverrideChange = (canonicalName, value) => {
     setColumnOverrides((prev) => ({
@@ -420,6 +361,10 @@ function App() {
           <input type="text" value={selectedRows.length} readOnly style={{ width: '80px' }} />
         </div>
 
+        <button className="btn btn-primary" onClick={handleOpenFeedback} disabled={selectedRows.length === 0}>
+          Provide Feedback ({selectedRows.length})
+        </button>
+
         <button className="btn btn-success" onClick={handleRunWithFeedback} disabled={!selectedFile || loading}>
           {loading ? 'Running...' : `Run Next Iteration (${iteration})`}
         </button>
@@ -464,30 +409,6 @@ function App() {
                 />
               </div>
             ))}
-          </div>
-        </div>
-      )}
-
-      {feedbackStats.total > 0 && (
-        <div className="feedback-panel">
-          <h3>Feedback Statistics</h3>
-          <div className="feedback-stats">
-            <div className="stat-card">
-              <div className="stat-value">{feedbackStats.total}</div>
-              <div className="stat-label">Total Feedback</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value" style={{ color: '#28a745' }}>{feedbackStats.correct}</div>
-              <div className="stat-label">Correct</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value" style={{ color: '#dc3545' }}>{feedbackStats.incorrect}</div>
-              <div className="stat-label">Incorrect</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value" style={{ color: '#ffc107' }}>{feedbackStats.corrections}</div>
-              <div className="stat-label">Corrections</div>
-            </div>
           </div>
         </div>
       )}
