@@ -6,7 +6,7 @@ Classifies spend transactions using supplier intelligence, transaction data, and
 import json
 import threading
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import Dict, List, Optional, Union
 
 import dspy
 import pandas as pd
@@ -60,6 +60,22 @@ class SpendClassifier:
         self._taxonomy_cache: Dict[str, Dict] = {}
         # Lock for thread-safe cache access
         self._cache_lock = threading.Lock()
+        
+        # Feedback examples for iterative improvement
+        self._feedback_examples: List[Dict] = []
+    
+    def add_feedback_examples(self, examples: List[Dict]):
+        """
+        Add feedback examples for few-shot learning.
+        
+        Args:
+            examples: List of feedback examples with transaction data and corrected classifications
+        """
+        self._feedback_examples.extend(examples)
+    
+    def clear_feedback_examples(self):
+        """Clear all feedback examples."""
+        self._feedback_examples = []
 
     def load_taxonomy(self, taxonomy_path: Union[str, Path]) -> Dict:
         """Load taxonomy from YAML file"""
@@ -202,10 +218,36 @@ class SpendClassifier:
             else "None"
         )
 
+        # Prepare examples from feedback if available
+        # DSPy can use examples through the predictor's configuration
+        # We'll add examples to the prompt context by including them in the transaction_data
+        feedback_context = ""
+        if self._feedback_examples:
+            feedback_context = "\n\nFEEDBACK EXAMPLES FROM PREVIOUS ITERATIONS:\n"
+            for i, example in enumerate(self._feedback_examples[:3], 1):  # Limit to 3 examples
+                if 'corrected' in example:
+                    corrected = example['corrected']
+                    example_path = '|'.join([
+                        v for v in [
+                            corrected.get('L1', ''),
+                            corrected.get('L2', ''),
+                            corrected.get('L3', ''),
+                            corrected.get('L4', ''),
+                            corrected.get('L5', ''),
+                        ] if v
+                    ])
+                    feedback_context += f"\nExample {i}:\n"
+                    feedback_context += f"Transaction: {json.dumps(example.get('transaction_data', {}), indent=2)}\n"
+                    feedback_context += f"Correct Classification: {example_path}\n"
+            feedback_context += "\nUse these examples to guide your classification.\n"
+
+        # Add feedback context to transaction data
+        enhanced_transaction_json = transaction_json + feedback_context
+
         # Call LLM
         result = self.classifier(
             supplier_profile=supplier_json,
-            transaction_data=transaction_json,
+            transaction_data=enhanced_transaction_json,
             taxonomy_structure=taxonomy_json,
             available_levels=available_levels_str,
             override_rules=override_rules,

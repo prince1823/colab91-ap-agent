@@ -1,6 +1,3 @@
-/mlruns/
-/mlflow.db
-/reports/
 # Python
 __pycache__/
 *.py[cod]
@@ -8,16 +5,16 @@ __pycache__/
 *.so
 .Python
 venv/
-ENV/
 env/
+ENV/
 .venv
-
-# DSPy
-.dspy_cache/
+*.egg-info/
+dist/
+build/
 
 # Environment
 .env
-.env.local
+.venv
 ops/.env
 
 # IDE
@@ -27,33 +24,26 @@ ops/.env
 *.swo
 *~
 
-*.log
+# Data
+extraction_outputs/
+results/
+feedback/
+*.csv
+*.xlsx
+*.xls
+
+# MLflow
+mlflow.db
+mlruns/
+
+# Benchmarks (create locally)
+benchmarks/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
 
 # OS
 .DS_Store
 Thumbs.db
-
-# Data files (temporary)
-*.csv
-*.xlsx
-!tests/sample_data.csv
-
-# Benchmarks (create locally as needed)
-# Keep the runner script tracked, but ignore data folders
-benchmarks/*/
-!benchmarks/*.py
-
-# Jupyter
-.ipynb_checkpoints/
-*.ipynb
-
-# Distribution
-dist/
-build/
-*.egg-info/
-
-/cube_data/
-/extraction_outputs/
-/results/
-/260925ARC03379/
-/ops/

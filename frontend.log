@@ -1,0 +1,56 @@
+
+> ap-agent-frontend@1.0.0 dev
+> vite
+
+✘ [ERROR] The symbol "defineConfig" has already been declared
+
+    vite.config.js:16:9:
+      16 │ import { defineConfig } from 'vite'
+         ╵          ~~~~~~~~~~~~
+
+  The symbol "defineConfig" was originally declared here:
+
+    vite.config.js:1:373:
+      1 │ ...-agent/frontend/vite.config.js";import { defineConfig } from 'vite'
+        ╵                                             ~~~~~~~~~~~~
+
+✘ [ERROR] The symbol "react" has already been declared
+
+    vite.config.js:17:7:
+      17 │ import react from '@vitejs/plugin-react'
+         ╵        ~~~~~
+
+  The symbol "react" was originally declared here:
+
+    vite.config.js:2:7:
+      2 │ import react from '@vitejs/plugin-react'
+        ╵        ~~~~~
+
+✘ [ERROR] Multiple exports with the same name "default"
+
+    vite.config.js:19:7:
+      19 │ export default defineConfig({
+         ╵        ~~~~~~~
+
+  The name "default" was originally exported here:
+
+    vite.config.js:4:7:
+      4 │ export default defineConfig({
+        ╵        ~~~~~~~
+
+failed to load config from /Users/princesaxena/Desktop/colab-91/colab91-ap-agent/frontend/vite.config.js
+error when starting dev server:
+Error: Build failed with 3 errors:
+vite.config.js:16:9: ERROR: The symbol "defineConfig" has already been declared
+vite.config.js:17:7: ERROR: The symbol "react" has already been declared
+vite.config.js:19:7: ERROR: Multiple exports with the same name "default"
+    at failureErrorWithLog (/Users/princesaxena/Desktop/colab-91/colab91-ap-agent/frontend/node_modules/esbuild/lib/main.js:1472:15)
+    at /Users/princesaxena/Desktop/colab-91/colab91-ap-agent/frontend/node_modules/esbuild/lib/main.js:945:25
+    at runOnEndCallbacks (/Users/princesaxena/Desktop/colab-91/colab91-ap-agent/frontend/node_modules/esbuild/lib/main.js:1315:45)
+    at buildResponseToResult (/Users/princesaxena/Desktop/colab-91/colab91-ap-agent/frontend/node_modules/esbuild/lib/main.js:943:7)
+    at /Users/princesaxena/Desktop/colab-91/colab91-ap-agent/frontend/node_modules/esbuild/lib/main.js:970:16
+    at responseCallbacks.<computed> (/Users/princesaxena/Desktop/colab-91/colab91-ap-agent/frontend/node_modules/esbuild/lib/main.js:622:9)
+    at handleIncomingPacket (/Users/princesaxena/Desktop/colab-91/colab91-ap-agent/frontend/node_modules/esbuild/lib/main.js:677:12)
+    at Socket.readFromStdout (/Users/princesaxena/Desktop/colab-91/colab91-ap-agent/frontend/node_modules/esbuild/lib/main.js:600:7)
+    at Socket.emit (node:events:508:28)
+    at addChunk (node:internal/streams/readable:559:12)

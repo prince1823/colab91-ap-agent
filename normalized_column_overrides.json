@@ -1,0 +1,15 @@
+{
+  "cost_center": "cost_center",
+  "currency": "currency",
+  "supplier_address": "supplier_address",
+  "supplier_name": "supplier_name",
+  "gl_description": "gl_description",
+  "gl_code": "gl_code",
+  "line_description": "line_description",
+  "invoice_date": "invoice_date",
+  "po_number": "po_number",
+  "amount": "amount",
+  "invoice_number": "invoice_number",
+  "department": "department",
+  "supplier_id": "supplier_id"
+}

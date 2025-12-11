@@ -20,6 +20,7 @@ class OpenAIConfig(BaseSettings):
     temperature: float = Field(default=0.0, alias="OPENAI_TEMPERATURE")
     max_tokens: Optional[int] = Field(default=None, alias="OPENAI_MAX_TOKENS")
     timeout: int = Field(default=60, alias="OPENAI_TIMEOUT")
+    base_url: Optional[str] = Field(default=None, alias="OPENAI_BASE_URL")
 
     class Config:
         env_file = "ops/.env"

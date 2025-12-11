@@ -23,7 +23,7 @@ pipeline = SpendClassificationPipeline(
     enable_tracing=True
 )
 
-transaction_data = pd.read_csv(transaction_csv, nrows=5)
+transaction_data = pd.read_csv(transaction_csv)
 
 print("Processing transactions through full pipeline...")
 classified_df = pipeline.process_transactions(transaction_data)
