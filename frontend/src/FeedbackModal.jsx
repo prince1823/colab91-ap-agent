@@ -12,10 +12,8 @@ function FeedbackModal({ modal, onClose, onSubmit }) {
       corrected_l4: row.L4 || '',
       corrected_l5: row.L5 || '',
       comment: '',
-      rating: null,
     }))
   })
-  const [userNotes, setUserNotes] = useState('')
 
   const updateFeedbackItem = (index, field, value) => {
     const updated = [...feedbackItems]
@@ -28,7 +26,6 @@ function FeedbackModal({ modal, onClose, onSubmit }) {
       result_file: modal.filename,
       iteration: modal.iteration,
       feedback_items: feedbackItems,
-      user_notes: userNotes,
     }
     onSubmit(feedbackData)
   }
@@ -112,23 +109,7 @@ function FeedbackModal({ modal, onClose, onSubmit }) {
               )}
 
               <div className="form-group">
-                <label>Rating (1-5)</label>
-                <div className="rating-buttons">
-                  {[1, 2, 3, 4, 5].map(rating => (
-                    <button
-                      key={rating}
-                      type="button"
-                      className={`rating-btn ${item.rating === rating ? 'selected' : ''}`}
-                      onClick={() => updateFeedbackItem(idx, 'rating', rating)}
-                    >
-                      {rating}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label>Comment</label>
+                <label>Your Approach for classification</label>
                 <textarea
                   value={item.comment}
                   onChange={(e) => updateFeedbackItem(idx, 'comment', e.target.value)}
@@ -137,15 +118,6 @@ function FeedbackModal({ modal, onClose, onSubmit }) {
               </div>
             </div>
           ))}
-        </div>
-
-        <div className="form-group">
-          <label>Overall Notes</label>
-          <textarea
-            value={userNotes}
-            onChange={(e) => setUserNotes(e.target.value)}
-            placeholder="General feedback about this batch..."
-          />
         </div>
 
         <div className="modal-actions">
