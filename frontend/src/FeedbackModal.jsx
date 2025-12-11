@@ -5,7 +5,7 @@ function FeedbackModal({ modal, onClose, onSubmit }) {
     return modal.rows.map((row, idx) => ({
       transaction_id: row.supplier_name || `row_${idx}`,
       row_index: idx,
-      feedback_type: 'correct',
+      feedback_type: 'correction',
       corrected_l1: row.L1 || '',
       corrected_l2: row.L2 || '',
       corrected_l3: row.L3 || '',
@@ -49,66 +49,50 @@ function FeedbackModal({ modal, onClose, onSubmit }) {
               </h4>
               
               <div className="form-group">
-                <label>Feedback Type</label>
-                <select
-                  value={item.feedback_type}
-                  onChange={(e) => updateFeedbackItem(idx, 'feedback_type', e.target.value)}
-                >
-                  <option value="correct">Correct</option>
-                  <option value="incorrect">Incorrect</option>
-                  <option value="correction">Correction Needed</option>
-                </select>
+                <label>Corrected L1</label>
+                <input
+                  type="text"
+                  value={item.corrected_l1}
+                  onChange={(e) => updateFeedbackItem(idx, 'corrected_l1', e.target.value)}
+                  placeholder={modal.rows[idx].L1 || 'Enter L1'}
+                />
               </div>
-
-              {item.feedback_type === 'correction' && (
-                <>
-                  <div className="form-group">
-                    <label>Corrected L1</label>
-                    <input
-                      type="text"
-                      value={item.corrected_l1}
-                      onChange={(e) => updateFeedbackItem(idx, 'corrected_l1', e.target.value)}
-                      placeholder={modal.rows[idx].L1 || 'Enter L1'}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Corrected L2</label>
-                    <input
-                      type="text"
-                      value={item.corrected_l2}
-                      onChange={(e) => updateFeedbackItem(idx, 'corrected_l2', e.target.value)}
-                      placeholder={modal.rows[idx].L2 || 'Enter L2'}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Corrected L3</label>
-                    <input
-                      type="text"
-                      value={item.corrected_l3}
-                      onChange={(e) => updateFeedbackItem(idx, 'corrected_l3', e.target.value)}
-                      placeholder={modal.rows[idx].L3 || 'Enter L3'}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Corrected L4</label>
-                    <input
-                      type="text"
-                      value={item.corrected_l4}
-                      onChange={(e) => updateFeedbackItem(idx, 'corrected_l4', e.target.value)}
-                      placeholder={modal.rows[idx].L4 || 'Enter L4'}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Corrected L5</label>
-                    <input
-                      type="text"
-                      value={item.corrected_l5}
-                      onChange={(e) => updateFeedbackItem(idx, 'corrected_l5', e.target.value)}
-                      placeholder={modal.rows[idx].L5 || 'Enter L5'}
-                    />
-                  </div>
-                </>
-              )}
+              <div className="form-group">
+                <label>Corrected L2</label>
+                <input
+                  type="text"
+                  value={item.corrected_l2}
+                  onChange={(e) => updateFeedbackItem(idx, 'corrected_l2', e.target.value)}
+                  placeholder={modal.rows[idx].L2 || 'Enter L2'}
+                />
+              </div>
+              <div className="form-group">
+                <label>Corrected L3</label>
+                <input
+                  type="text"
+                  value={item.corrected_l3}
+                  onChange={(e) => updateFeedbackItem(idx, 'corrected_l3', e.target.value)}
+                  placeholder={modal.rows[idx].L3 || 'Enter L3'}
+                />
+              </div>
+              <div className="form-group">
+                <label>Corrected L4</label>
+                <input
+                  type="text"
+                  value={item.corrected_l4}
+                  onChange={(e) => updateFeedbackItem(idx, 'corrected_l4', e.target.value)}
+                  placeholder={modal.rows[idx].L4 || 'Enter L4'}
+                />
+              </div>
+              <div className="form-group">
+                <label>Corrected L5</label>
+                <input
+                  type="text"
+                  value={item.corrected_l5}
+                  onChange={(e) => updateFeedbackItem(idx, 'corrected_l5', e.target.value)}
+                  placeholder={modal.rows[idx].L5 || 'Enter L5'}
+                />
+              </div>
 
               <div className="form-group">
                 <label>Your approach for classification (used to improve the system)</label>
