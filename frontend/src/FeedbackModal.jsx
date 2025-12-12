@@ -50,39 +50,47 @@ function FeedbackModal({ modal, onClose, onSubmit }) {
               
               <div className="form-group">
                 <label>Corrected L1</label>
-                <input
-                  type="text"
+                <select
                   value={item.corrected_l1}
                   onChange={(e) => updateFeedbackItem(idx, 'corrected_l1', e.target.value)}
-                  placeholder={modal.rows[idx].L1 || 'Enter L1'}
-                />
+                  style={{ width: '100%', padding: '8px' }}
+                >
+                  <option value="">Select L1...</option>
+                  {/* In full implementation, would populate from taxonomy */}
+                </select>
               </div>
               <div className="form-group">
                 <label>Corrected L2</label>
-                <input
-                  type="text"
+                <select
                   value={item.corrected_l2}
                   onChange={(e) => updateFeedbackItem(idx, 'corrected_l2', e.target.value)}
-                  placeholder={modal.rows[idx].L2 || 'Enter L2'}
-                />
+                  style={{ width: '100%', padding: '8px' }}
+                  disabled={!item.corrected_l1}
+                >
+                  <option value="">Select L2...</option>
+                </select>
               </div>
               <div className="form-group">
                 <label>Corrected L3</label>
-                <input
-                  type="text"
+                <select
                   value={item.corrected_l3}
                   onChange={(e) => updateFeedbackItem(idx, 'corrected_l3', e.target.value)}
-                  placeholder={modal.rows[idx].L3 || 'Enter L3'}
-                />
+                  style={{ width: '100%', padding: '8px' }}
+                  disabled={!item.corrected_l2}
+                >
+                  <option value="">Select L3...</option>
+                </select>
               </div>
               <div className="form-group">
                 <label>Corrected L4</label>
-                <input
-                  type="text"
+                <select
                   value={item.corrected_l4}
                   onChange={(e) => updateFeedbackItem(idx, 'corrected_l4', e.target.value)}
-                  placeholder={modal.rows[idx].L4 || 'Enter L4'}
-                />
+                  style={{ width: '100%', padding: '8px' }}
+                  disabled={!item.corrected_l3}
+                >
+                  <option value="">Select L4...</option>
+                </select>
               </div>
               <div className="form-group">
                 <label>Corrected L5</label>

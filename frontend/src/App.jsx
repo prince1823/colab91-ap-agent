@@ -4,6 +4,8 @@ import 'ag-grid-community/styles/ag-grid.css'
 import 'ag-grid-community/styles/ag-theme-alpine.css'
 import axios from 'axios'
 import FeedbackModal from './FeedbackModal'
+import ProposalModal from './ProposalModal'
+import BulkChangeModal from './BulkChangeModal'
 import './App.css'
 
 const API_BASE = '/api'
@@ -17,7 +19,10 @@ function App() {
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
   const [feedbackModal, setFeedbackModal] = useState(null)
+  const [proposalModal, setProposalModal] = useState(null)
+  const [bulkChangeModal, setBulkChangeModal] = useState(null)
   const [selectedRows, setSelectedRows] = useState([])
+  const [processingFeedback, setProcessingFeedback] = useState(false)
   const [iteration, setIteration] = useState(0)
   const [feedbackStats, setFeedbackStats] = useState({
     total: 0,
@@ -169,10 +174,100 @@ function App() {
       setFeedbackModal(null)
       setSelectedRows([])
       loadFeedback(selectedFile)
+      
+      // Process first feedback item to generate proposal
+      if (feedbackData.feedback_items && feedbackData.feedback_items.length > 0) {
+        await processFeedbackItem(0, feedbackData.result_file)
+      }
+      
       setTimeout(() => setSuccess(null), 5000)
     } catch (err) {
       setError(`Failed to submit feedback: ${err.message}`)
     }
+  }
+
+  const processFeedbackItem = async (itemIndex, resultFile) => {
+    setProcessingFeedback(true)
+    setError(null)
+    try {
+      const response = await axios.post(`${API_BASE}/feedback/process`, {
+        result_file: resultFile,
+        feedback_item_index: itemIndex,
+      })
+      
+      setProposalModal({
+        proposal: response.data,
+        feedbackItemIndex: itemIndex,
+        resultFile: resultFile,
+      })
+    } catch (err) {
+      setError(`Failed to process feedback: ${err.message}`)
+    } finally {
+      setProcessingFeedback(false)
+    }
+  }
+
+  const handleApproveProposal = async (editedText) => {
+    setProcessingFeedback(true)
+    setError(null)
+    try {
+      const response = await axios.post(`${API_BASE}/feedback/approve`, {
+        result_file: proposalModal.resultFile,
+        feedback_item_index: proposalModal.feedbackItemIndex,
+        action_proposal: proposalModal.proposal,
+        edited_text: editedText,
+      })
+      
+      setProposalModal(null)
+      
+      // If bulk approval needed, show bulk change modal
+      if (response.data.requires_bulk_approval && response.data.applicable_rows) {
+        setBulkChangeModal({
+          applicableRows: response.data.applicable_rows,
+          actionProposal: proposalModal.proposal,
+          resultFile: proposalModal.resultFile,
+          executionResult: response.data.execution_result,
+        })
+      } else {
+        setSuccess('Action approved and executed successfully!')
+        setTimeout(() => setSuccess(null), 5000)
+      }
+    } catch (err) {
+      setError(`Failed to approve action: ${err.message}`)
+    } finally {
+      setProcessingFeedback(false)
+    }
+  }
+
+  const handleRejectProposal = () => {
+    setProposalModal(null)
+  }
+
+  const handleApproveBulkChanges = async (actionProposal) => {
+    setProcessingFeedback(true)
+    setError(null)
+    try {
+      const response = await axios.post(`${API_BASE}/feedback/apply-bulk`, {
+        result_file: bulkChangeModal.resultFile,
+        action_proposal: actionProposal,
+        approved: true,
+      })
+      
+      setBulkChangeModal(null)
+      setSuccess(`Bulk changes applied successfully! ${response.data.rows_updated} rows updated. New file: ${response.data.updated_file}`)
+      setTimeout(() => {
+        setSuccess(null)
+        loadResultFiles()
+      }, 5000)
+    } catch (err) {
+      setError(`Failed to apply bulk changes: ${err.message}`)
+    } finally {
+      setProcessingFeedback(false)
+    }
+  }
+
+  const handleRejectBulkChanges = () => {
+    setBulkChangeModal(null)
   }
 
   const handleRunWithFeedback = async () => {
@@ -465,6 +560,27 @@ function App() {
           modal={feedbackModal}
           onClose={() => setFeedbackModal(null)}
           onSubmit={handleSubmitFeedback}
+        />
+      )}
+
+      {proposalModal && (
+        <ProposalModal
+          proposal={proposalModal.proposal}
+          onClose={handleRejectProposal}
+          onApprove={handleApproveProposal}
+          onReject={handleRejectProposal}
+          loading={processingFeedback}
+        />
+      )}
+
+      {bulkChangeModal && (
+        <BulkChangeModal
+          applicableRows={bulkChangeModal.applicableRows}
+          actionProposal={bulkChangeModal.actionProposal}
+          onClose={handleRejectBulkChanges}
+          onApprove={handleApproveBulkChanges}
+          onReject={handleRejectBulkChanges}
+          loading={processingFeedback}
         />
       )}
     </div>

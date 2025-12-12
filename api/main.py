@@ -16,6 +16,9 @@ from core.pipeline import SpendClassificationPipeline
 from core.agents.column_canonicalization.canonical_columns import (
     get_canonical_columns_metadata,
 )
+from core.agents.feedback_analysis import FeedbackAnalyzer
+from core.actions.executor import ActionExecutor
+from pathlib import Path
 
 app = FastAPI(title="AP Agent Feedback API", version="1.0.0")
 
@@ -264,6 +267,228 @@ async def submit_feedback(feedback_batch: FeedbackBatch):
         json.dump(feedback_data, f, indent=2)
     
     return {"status": "success", "feedback_file": feedback_file.name, "items_count": len(feedback_batch.feedback_items)}
+
+
+class ProcessFeedbackRequest(BaseModel):
+    """Request to process feedback and generate proposals."""
+    result_file: str
+    feedback_item_index: int
+    taxonomy_path: Optional[str] = None
+
+
+class ActionProposal(BaseModel):
+    """Action proposal from feedback analysis."""
+    action_type: str
+    description: str
+    proposed_change: str
+    metadata: Dict[str, Any]
+
+
+@app.post("/api/feedback/process", response_model=ActionProposal)
+async def process_feedback(request: ProcessFeedbackRequest):
+    """Process feedback and generate action proposal."""
+    # Load feedback file
+    feedback_files = sorted(FEEDBACK_DIR.glob(f"feedback_{request.result_file}_*.json"))
+    if not feedback_files:
+        raise HTTPException(status_code=404, detail="Feedback file not found")
+    
+    # Use most recent feedback file
+    with open(feedback_files[-1], "r") as f:
+        feedback_data = json.load(f)
+    
+    feedback_items = feedback_data.get("feedback_items", [])
+    if request.feedback_item_index >= len(feedback_items):
+        raise HTTPException(status_code=404, detail="Feedback item index out of range")
+    
+    feedback_item = feedback_items[request.feedback_item_index]
+    
+    # Load result file to get transaction data
+    result_path = RESULTS_DIR / request.result_file
+    if not result_path.exists():
+        raise HTTPException(status_code=404, detail="Result file not found")
+    
+    result_df = pd.read_csv(result_path)
+    row_idx = feedback_item.get("row_index", 0)
+    if row_idx >= len(result_df):
+        raise HTTPException(status_code=404, detail="Row index out of range")
+    
+    transaction_row = result_df.iloc[row_idx]
+    transaction_data = transaction_row.to_dict()
+    
+    # Get taxonomy path
+    taxonomy_path = request.taxonomy_path
+    if not taxonomy_path:
+        # Try to infer from result file or use default
+        taxonomy_path = "taxonomies/FOX_20230816_161348.yaml"
+    
+    base_dir = Path(__file__).parent.parent
+    taxonomy_file = Path(taxonomy_path)
+    if not taxonomy_file.is_absolute():
+        taxonomy_file = base_dir / taxonomy_file
+    
+    if not taxonomy_file.exists():
+        raise HTTPException(status_code=404, detail=f"Taxonomy file not found: {taxonomy_file}")
+    
+    # Prepare supplier context (simplified for now)
+    supplier_context = {
+        "supplier_name": transaction_data.get("supplier_name", ""),
+    }
+    
+    # Analyze feedback
+    analyzer = FeedbackAnalyzer()
+    
+    # Add original classification to feedback item
+    original_classification = {
+        "L1": transaction_data.get("L1"),
+        "L2": transaction_data.get("L2"),
+        "L3": transaction_data.get("L3"),
+        "L4": transaction_data.get("L4"),
+        "L5": transaction_data.get("L5"),
+    }
+    feedback_item["original_classification"] = original_classification
+    
+    # Extract corrected classification to metadata
+    action_metadata = {
+        "corrected_l1": feedback_item.get("corrected_l1"),
+        "corrected_l2": feedback_item.get("corrected_l2"),
+        "corrected_l3": feedback_item.get("corrected_l3"),
+        "corrected_l4": feedback_item.get("corrected_l4"),
+        "corrected_l5": feedback_item.get("corrected_l5"),
+        "supplier_name": transaction_data.get("supplier_name"),
+        "gl_code": transaction_data.get("gl_code"),
+    }
+    
+    action = analyzer.analyze_feedback(
+        feedback_item=feedback_item,
+        transaction_data=transaction_data,
+        supplier_context=supplier_context,
+        taxonomy_path=taxonomy_file,
+    )
+    
+    # Merge action metadata with feedback metadata
+    action.metadata.update(action_metadata)
+    
+    return {
+        "action_type": action.action_type.value,
+        "description": action.description,
+        "proposed_change": action.proposed_change,
+        "metadata": action.metadata,
+    }
+
+
+class ApproveActionRequest(BaseModel):
+    """Request to approve and execute an action."""
+    result_file: str
+    feedback_item_index: int
+    action_proposal: ActionProposal
+    edited_text: Optional[str] = None
+    taxonomy_path: Optional[str] = None
+
+
+@app.post("/api/feedback/approve")
+async def approve_action(request: ApproveActionRequest):
+    """Approve and execute feedback action."""
+    # Load result file
+    result_path = RESULTS_DIR / request.result_file
+    if not result_path.exists():
+        raise HTTPException(status_code=404, detail="Result file not found")
+    
+    result_df = pd.read_csv(result_path)
+    
+    # Get taxonomy path
+    taxonomy_path = request.taxonomy_path
+    if not taxonomy_path:
+        taxonomy_path = "taxonomies/FOX_20230816_161348.yaml"
+    
+    base_dir = Path(__file__).parent.parent
+    taxonomy_file = Path(taxonomy_path)
+    if not taxonomy_file.is_absolute():
+        taxonomy_file = base_dir / taxonomy_file
+    
+    # Create action executor
+    executor = ActionExecutor(taxonomy_path=taxonomy_file, results_df=result_df)
+    
+    # Convert proposal back to action
+    from core.agents.feedback_analysis.model import FeedbackAction, ActionType
+    action = FeedbackAction(
+        action_type=ActionType(request.action_proposal.action_type),
+        description=request.action_proposal.description,
+        proposed_change=request.edited_text or request.action_proposal.proposed_change,
+        metadata=request.action_proposal.metadata,
+    )
+    
+    # Find applicable rows
+    applicable_rows = executor.find_applicable_rows(action, result_df)
+    
+    # Execute action
+    execution_result = executor.execute_action(action, request.edited_text)
+    
+    # If supplier DB or rule action, return applicable rows for bulk approval
+    if action.action_type.value in ["supplier_db_update", "rule_creation"]:
+        applicable_data = applicable_rows.to_dict("records") if not applicable_rows.empty else []
+        return {
+            "status": "success",
+            "execution_result": execution_result,
+            "applicable_rows_count": len(applicable_rows),
+            "applicable_rows": applicable_data[:100],  # Limit to first 100 for response
+            "requires_bulk_approval": len(applicable_rows) > 0,
+        }
+    
+    return {
+        "status": "success",
+        "execution_result": execution_result,
+        "requires_bulk_approval": False,
+    }
+
+
+class ApplyBulkChangesRequest(BaseModel):
+    """Request to apply bulk changes."""
+    result_file: str
+    action_proposal: ActionProposal
+    approved: bool
+
+
+@app.post("/api/feedback/apply-bulk")
+async def apply_bulk_changes(request: ApplyBulkChangesRequest):
+    """Apply bulk changes to results file."""
+    if not request.approved:
+        return {"status": "cancelled", "message": "Bulk changes not approved"}
+    
+    # Load result file
+    result_path = RESULTS_DIR / request.result_file
+    if not result_path.exists():
+        raise HTTPException(status_code=404, detail="Result file not found")
+    
+    result_df = pd.read_csv(result_path)
+    
+    # Create action executor
+    executor = ActionExecutor(results_df=result_df)
+    
+    # Convert proposal to action
+    from core.agents.feedback_analysis.model import FeedbackAction, ActionType
+    action = FeedbackAction(
+        action_type=ActionType(request.action_proposal.action_type),
+        description=request.action_proposal.description,
+        proposed_change=request.action_proposal.proposed_change,
+        metadata=request.action_proposal.metadata,
+    )
+    
+    # Find applicable rows
+    applicable_rows = executor.find_applicable_rows(action, result_df)
+    
+    # Apply bulk changes
+    updated_df = executor.apply_bulk_changes(action, applicable_rows, result_df)
+    
+    # Save updated file (append _updated to filename)
+    output_path = result_path.parent / f"{result_path.stem}_updated{result_path.suffix}"
+    updated_df.to_csv(output_path, index=False)
+    
+    return {
+        "status": "success",
+        "updated_file": output_path.name,
+        "rows_updated": len(applicable_rows),
+        "total_rows": len(result_df),
+    }
 
 
 @app.get("/api/feedback/{result_file}")
