@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 import numpy as np
+import yaml
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException
@@ -636,6 +637,106 @@ async def update_normalized_column_overrides(payload: NormalizedColumnOverrides)
         raise HTTPException(status_code=500, detail=f"Failed to save overrides: {str(exc)}")
 
     return {"status": "success", "overrides": cleaned_overrides}
+
+
+@app.get("/api/taxonomy/{taxonomy_file}/structure")
+async def get_taxonomy_structure(taxonomy_file: str):
+    """Get taxonomy structure for populating dropdowns (L1, L2, L3, L4)."""
+    base_dir = Path(__file__).parent.parent
+    taxonomy_path = base_dir / "taxonomies" / taxonomy_file
+    
+    if not taxonomy_path.exists():
+        raise HTTPException(status_code=404, detail=f"Taxonomy file not found: {taxonomy_file}")
+    
+    try:
+        with open(taxonomy_path, 'r') as f:
+            taxonomy_data = yaml.safe_load(f)
+        
+        # Extract taxonomy paths
+        taxonomy_list = taxonomy_data.get("taxonomy", [])
+        
+        # Build hierarchical structure
+        structure = {
+            "L1": [],
+            "L2": {},
+            "L3": {},
+            "L4": {},
+        }
+        
+        for path in taxonomy_list:
+            parts = [p.strip() for p in path.split("|")]
+            
+            # L1
+            if len(parts) > 0 and parts[0] not in structure["L1"]:
+                structure["L1"].append(parts[0])
+            
+            # L2 (grouped by L1)
+            if len(parts) > 1:
+                l1 = parts[0]
+                if l1 not in structure["L2"]:
+                    structure["L2"][l1] = []
+                if parts[1] not in structure["L2"][l1]:
+                    structure["L2"][l1].append(parts[1])
+            
+            # L3 (grouped by L1|L2)
+            if len(parts) > 2:
+                l1_l2 = f"{parts[0]}|{parts[1]}"
+                if l1_l2 not in structure["L3"]:
+                    structure["L3"][l1_l2] = []
+                if parts[2] not in structure["L3"][l1_l2]:
+                    structure["L3"][l1_l2].append(parts[2])
+            
+            # L4 (grouped by L1|L2|L3)
+            if len(parts) > 3:
+                l1_l2_l3 = f"{parts[0]}|{parts[1]}|{parts[2]}"
+                if l1_l2_l3 not in structure["L4"]:
+                    structure["L4"][l1_l2_l3] = []
+                if parts[3] not in structure["L4"][l1_l2_l3]:
+                    structure["L4"][l1_l2_l3].append(parts[3])
+        
+        # Sort all lists
+        structure["L1"].sort()
+        for l1 in structure["L2"]:
+            structure["L2"][l1].sort()
+        for key in structure["L3"]:
+            structure["L3"][key].sort()
+        for key in structure["L4"]:
+            structure["L4"][key].sort()
+        
+        return {
+            "taxonomy_file": taxonomy_file,
+            "max_depth": taxonomy_data.get("max_taxonomy_depth", 3),
+            "structure": structure,
+        }
+    except Exception as e:
+        import traceback
+        raise HTTPException(status_code=500, detail=f"Error loading taxonomy: {str(e)}\n{traceback.format_exc()}")
+
+
+@app.get("/api/taxonomy/list")
+async def list_taxonomies():
+    """List all available taxonomy files."""
+    base_dir = Path(__file__).parent.parent
+    taxonomies_dir = base_dir / "taxonomies"
+    
+    if not taxonomies_dir.exists():
+        return {"taxonomies": []}
+    
+    taxonomy_files = []
+    for file in sorted(taxonomies_dir.glob("*.yaml")):
+        try:
+            with open(file, 'r') as f:
+                data = yaml.safe_load(f)
+                taxonomy_files.append({
+                    "filename": file.name,
+                    "client_name": data.get("client_name", ""),
+                    "project_id": data.get("project_id", ""),
+                    "max_depth": data.get("max_taxonomy_depth", 3),
+                })
+        except Exception:
+            continue
+    
+    return {"taxonomies": taxonomy_files}
 
 
 def load_feedback_examples(input_file: str, max_iteration: int) -> List[Dict]:
