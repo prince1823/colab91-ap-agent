@@ -132,9 +132,18 @@ async def list_results():
         
         for file in sorted(csv_files, key=lambda x: x.stat().st_mtime, reverse=True):
             try:
-                # Only count rows to avoid heavy load
-                with file.open("r", newline="") as f:
-                    row_count = sum(1 for _ in f) - 1  # header
+                # Skip row counting for list endpoint to avoid hanging on large files
+                # Row count will be shown when file is actually loaded
+                file_size = file.stat().st_size
+                
+                # Quick estimation for display only (avoid reading entire file)
+                # Estimate based on file size - rough approximation
+                if file_size > 0:
+                    # Rough estimate: assume average 200-500 bytes per row
+                    estimated_rows = max(0, int(file_size / 300))
+                else:
+                    estimated_rows = 0
+                
                 iteration = 0
                 if "_iter" in file.stem:
                     parts = file.stem.split("_iter")
@@ -147,7 +156,7 @@ async def list_results():
                 result_files.append({
                     "filename": file.name,
                     "timestamp": datetime.fromtimestamp(file.stat().st_mtime).isoformat(),
-                    "row_count": row_count,
+                    "row_count": estimated_rows,  # Estimated, actual count shown when loaded
                     "iteration": iteration,
                 })
             except Exception as e:
