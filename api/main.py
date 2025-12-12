@@ -33,11 +33,13 @@ app.add_middleware(
 )
 
 # Feedback storage directory
-FEEDBACK_DIR = Path("feedback")
+# Use absolute paths relative to the project root (parent of api/)
+BASE_DIR = Path(__file__).parent.parent
+FEEDBACK_DIR = BASE_DIR / "feedback"
 FEEDBACK_DIR.mkdir(exist_ok=True)
-RESULTS_DIR = Path("results")
+RESULTS_DIR = BASE_DIR / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
-NORMALIZED_OVERRIDES_FILE = Path("normalized_column_overrides.json")
+NORMALIZED_OVERRIDES_FILE = BASE_DIR / "normalized_column_overrides.json"
 
 
 def load_saved_overrides() -> Dict[str, str]:
@@ -118,27 +120,47 @@ async def root():
 async def list_results():
     """List all result files."""
     result_files = []
-    for file in sorted(RESULTS_DIR.glob("*.csv"), key=lambda x: x.stat().st_mtime, reverse=True):
-        try:
-            # Only count rows to avoid heavy load
-            with file.open("r", newline="") as f:
-                row_count = sum(1 for _ in f) - 1  # header
-            iteration = 0
-            if "_iter" in file.stem:
-                parts = file.stem.split("_iter")
-                if len(parts) > 1:
-                    iteration = int(parts[-1])
-            
-            result_files.append({
-                "filename": file.name,
-                "timestamp": datetime.fromtimestamp(file.stat().st_mtime).isoformat(),
-                "row_count": row_count,
-                "iteration": iteration,
-            })
-        except Exception:
-            continue
-    
-    return {"results": result_files}
+    try:
+        # Ensure RESULTS_DIR exists
+        if not RESULTS_DIR.exists():
+            RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+        
+        # Find all CSV files
+        csv_files = list(RESULTS_DIR.glob("*.csv"))
+        if not csv_files:
+            return {"results": [], "message": f"No CSV files found in {RESULTS_DIR.absolute()}"}
+        
+        for file in sorted(csv_files, key=lambda x: x.stat().st_mtime, reverse=True):
+            try:
+                # Only count rows to avoid heavy load
+                with file.open("r", newline="") as f:
+                    row_count = sum(1 for _ in f) - 1  # header
+                iteration = 0
+                if "_iter" in file.stem:
+                    parts = file.stem.split("_iter")
+                    if len(parts) > 1:
+                        try:
+                            iteration = int(parts[-1])
+                        except ValueError:
+                            iteration = 0
+                
+                result_files.append({
+                    "filename": file.name,
+                    "timestamp": datetime.fromtimestamp(file.stat().st_mtime).isoformat(),
+                    "row_count": row_count,
+                    "iteration": iteration,
+                })
+            except Exception as e:
+                # Log but continue processing other files
+                import logging
+                logging.warning(f"Error processing file {file.name}: {e}")
+                continue
+        
+        return {"results": result_files}
+    except Exception as e:
+        import traceback
+        error_detail = f"Error listing results: {str(e)}\n{traceback.format_exc()}\nRESULTS_DIR: {RESULTS_DIR.absolute()}"
+        raise HTTPException(status_code=500, detail=error_detail)
 
 
 @app.get("/api/results/{filename}")
