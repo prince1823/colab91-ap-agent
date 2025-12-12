@@ -1,10 +1,31 @@
 """Invoice grouping utilities for transaction processing."""
 
 import logging
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
+from core.utils.invoice_config import DEFAULT_CONFIG
+
 logger = logging.getLogger(__name__)
+
+
+def validate_grouping_columns(canonical_df: pd.DataFrame, grouping_columns: List[str]) -> None:
+    """
+    Validate that all required grouping columns exist in the DataFrame.
+
+    Args:
+        canonical_df: DataFrame to validate
+        grouping_columns: List of required column names
+
+    Raises:
+        ValueError: If any required columns are missing
+    """
+    missing_cols = [col for col in grouping_columns if col not in canonical_df.columns]
+    if missing_cols:
+        raise ValueError(
+            f"Missing required grouping columns: {missing_cols}. "
+            f"Available columns: {list(canonical_df.columns)}"
+        )
 
 
 def create_invoice_key(row_dict: Dict, grouping_columns: List[str]) -> str:
@@ -34,7 +55,7 @@ def create_invoice_key(row_dict: Dict, grouping_columns: List[str]) -> str:
 
 def group_transactions_by_invoice(
     canonical_df: pd.DataFrame,
-    grouping_columns: List[str] = None
+    grouping_columns: Optional[List[str]] = None
 ) -> Dict[str, List[Tuple[int, int, Dict]]]:
     """
     Group transactions into invoices.
@@ -42,15 +63,18 @@ def group_transactions_by_invoice(
     Args:
         canonical_df: DataFrame with canonical columns
         grouping_columns: Columns to group by
+            If None, uses default from InvoiceProcessingConfig
             Default: ['invoice_date', 'company', 'supplier_name', 'creation_date']
-            TODO: Make this configurable via config file
 
     Returns:
         Dictionary mapping invoice_key to list of (position, df_index, row_dict) tuples
     """
     if grouping_columns is None:
-        # TODO: Make this configurable via config file
-        grouping_columns = ['invoice_date', 'company', 'supplier_name', 'creation_date']
+        # Use default from configuration
+        grouping_columns = DEFAULT_CONFIG.default_grouping_columns
+
+    # Validate that all required columns exist
+    validate_grouping_columns(canonical_df, grouping_columns)
 
     invoices = {}
 
@@ -65,6 +89,9 @@ def group_transactions_by_invoice(
             invoices[invoice_key] = []
 
         invoices[invoice_key].append((pos, df_idx, row_dict))
+
+    # Filter out empty invoice groups (shouldn't happen, but safety check)
+    invoices = {k: v for k, v in invoices.items() if v}
 
     logger.info(f"Grouped {len(canonical_df)} rows into {len(invoices)} invoices (avg {len(canonical_df)/len(invoices):.1f} rows/invoice)")
 

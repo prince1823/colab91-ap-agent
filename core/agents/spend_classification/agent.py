@@ -17,6 +17,8 @@ from core.agents.taxonomy_rag import TaxonomyRetriever
 from core.llms.llm import get_llm_for_agent
 from core.utils.mlflow import setup_mlflow_tracing
 from core.utils.transaction_utils import is_valid_value
+from core.utils.invoice_config import InvoiceProcessingConfig, DEFAULT_CONFIG
+from core.utils.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +45,10 @@ class ExpertClassifier:
         self._cache_lock = threading.Lock()
         self._current_taxonomy: List[str] = []
 
-        # Configurable batch size for large invoices
-        self.MAX_ROWS_PER_BATCH = 50
+        # Invoice processing configuration
+        self.invoice_config: InvoiceProcessingConfig = DEFAULT_CONFIG
+        self.MAX_ROWS_PER_BATCH = self.invoice_config.max_rows_per_batch
+        
         self.research_agent = None  # Research agent (for supplier research, not company domain context)
         self._company_context_cache: Dict[str, str] = {}  # Cache company domain context
         self._classifier = None  # ChainOfThought classifier instance
@@ -55,11 +59,21 @@ class ExpertClassifier:
     def load_taxonomy(self, taxonomy_path: Union[str, Path]) -> Dict:
         """Load taxonomy from YAML with caching."""
         path_str = str(taxonomy_path)
+        
+        # Check cache first (outside lock for performance)
+        if path_str in self._taxonomy_cache:
+            return self._taxonomy_cache[path_str]
+        
+        # Load file outside lock to avoid blocking
+        with open(path_str, 'r') as f:
+            data = yaml.safe_load(f)
+        
+        # Update cache inside lock with double-check
         with self._cache_lock:
             if path_str not in self._taxonomy_cache:
-                with open(path_str, 'r') as f:
-                    self._taxonomy_cache[path_str] = yaml.safe_load(f)
-            return self._taxonomy_cache[path_str]
+                self._taxonomy_cache[path_str] = data
+        
+        return self._taxonomy_cache[path_str]
 
     def _format_supplier_info(self, supplier_profile: Dict) -> str:
         if not supplier_profile:
@@ -296,6 +310,9 @@ class ExpertClassifier:
         # Note if invoice was truncated (batch has more rows than display limit)
         if len(invoice_transactions) > self.MAX_ROWS_PER_BATCH:
             parts.append(f"  ... and {len(invoice_transactions) - self.MAX_ROWS_PER_BATCH} more line items")
+            parts.append(f"\nNOTE: Invoice has {len(invoice_transactions)} total line items. "
+                        f"Showing first {self.MAX_ROWS_PER_BATCH} for classification context. "
+                        f"All {len(invoice_transactions)} items will be classified.")
 
         parts.append("")
         parts.append("(All line items will be classified individually based on shared invoice context)")
@@ -685,111 +702,142 @@ class ExpertClassifier:
         from collections import Counter
 
         errors = []
+        fallback = self._get_fallback_classification(already_classified)
 
-        def get_fallback_classification():
-            """Get fallback classification using two-tier strategy."""
-            if already_classified:
-                # Find majority classification
-                counter = Counter(already_classified)
-                majority = counter.most_common(1)[0]
-                if majority[1] > 1 or len(counter) == 1:  # Clear majority or only one unique value
-                    return majority[0]
-            # Second fallback
-            return "Unknown"
+        # Check if response is a single path (not JSON list)
+        single_path_result = self._parse_single_path_response(response, expected_count, fallback)
+        if single_path_result:
+            paths, parse_errors = single_path_result
+            errors.extend(parse_errors)
+            return paths, errors
 
-        # First, check if response looks like a single classification path (not JSON)
-        # This happens when LLM returns a single path for all rows (valid and common!)
-        if response and not response.strip().startswith('['):
-            # Looks like a single classification path, not a JSON list
-            # Use this path for all rows (common case: all rows get same classification)
-            if '|' in response:  # Looks like a valid taxonomy path
-                # This is valid! LLM chose to return single path for all rows
-                logger.debug(f"LLM returned single path for {expected_count} rows: {response[:100]}")
-                return [response] * expected_count, errors
-            # Otherwise, treat as invalid and use fallback
-            fallback = get_fallback_classification()
-            errors.append({
+        # Try to parse as JSON list
+        json_result = self._parse_json_list_response(response, expected_count, fallback, already_classified)
+        if json_result:
+            paths, parse_errors = json_result
+            errors.extend(parse_errors)
+            return paths, errors
+
+        # Complete failure - use fallback
+        errors.append({
+            'error_type': 'PARSE_FAILED',
+            'message': 'Failed to parse response as single path or JSON list',
+            'fallback_used': fallback,
+            'raw_response': response[:500]
+        })
+        return [fallback] * expected_count, errors
+    
+    def _parse_single_path_response(
+        self,
+        response: str,
+        expected_count: int,
+        fallback: str
+    ) -> Optional[Tuple[List[str], List[Dict]]]:
+        """
+        Parse response as single classification path (not JSON).
+
+        Args:
+            response: LLM response
+            expected_count: Expected number of classifications
+            fallback: Fallback path to use
+
+        Returns:
+            Tuple of (paths, errors) if parsed as single path, None otherwise
+        """
+        if not response or response.strip().startswith('['):
+            return None
+        
+        # Looks like a single classification path
+        if '|' in response:  # Valid taxonomy path format
+            logger.debug(f"LLM returned single path for {expected_count} rows: {response[:100]}")
+            return [response.strip()] * expected_count, []
+        
+        # Invalid single path
+        return (
+            [fallback] * expected_count,
+            [{
                 'error_type': 'INVALID_SINGLE_PATH',
                 'message': f'Response is not a valid taxonomy path: {response[:100]}',
                 'fallback_used': fallback,
                 'raw_response': response[:500]
-            })
-            return [fallback] * expected_count, errors
+            }]
+        )
+    
+    def _parse_json_list_response(
+        self,
+        response: str,
+        expected_count: int,
+        fallback: str,
+        already_classified: List[str] = None
+    ) -> Optional[Tuple[List[str], List[Dict]]]:
+        """
+        Parse response as JSON list.
+
+        Args:
+            response: LLM response
+            expected_count: Expected number of classifications
+            fallback: Fallback path to use
+            already_classified: Already classified paths for recursive parsing
+
+        Returns:
+            Tuple of (paths, errors) if parsed as JSON, None otherwise
+        """
+        import json
+        import re
 
         try:
-            # Try to parse as JSON
             parsed = json.loads(response)
+        except json.JSONDecodeError:
+            # Try to extract list from response using regex
+            list_pattern = r'\[([^\]]+)\]'
+            match = re.search(list_pattern, response)
+            if match:
+                try:
+                    list_str = match.group(0)
+                    parsed = json.loads(list_str)
+                except:
+                    return None
+            else:
+                return None
 
-            if not isinstance(parsed, list):
-                # Not a list - apply fallback for all
-                fallback = get_fallback_classification()
-                errors.append({
+        if not isinstance(parsed, list):
+            return (
+                [fallback] * expected_count,
+                [{
                     'error_type': 'JSON_PARSE_FAILED',
                     'message': f'Expected JSON list, got {type(parsed).__name__}',
                     'fallback_used': fallback,
                     'raw_response': response[:500]
-                })
-                return [fallback] * expected_count, errors
+                }]
+            )
 
-            # Valid list
-            if len(parsed) == expected_count:
-                # Perfect match
-                return [str(p) for p in parsed], errors
-
-            elif len(parsed) < expected_count:
-                # Partial response - use what we have and fill missing with fallback
-                fallback = get_fallback_classification()
-                missing_count = expected_count - len(parsed)
-                result = [str(p) for p in parsed] + [fallback] * missing_count
-                errors.append({
+        # Valid list - check length
+        if len(parsed) == expected_count:
+            return [str(p) for p in parsed], []
+        elif len(parsed) < expected_count:
+            missing_count = expected_count - len(parsed)
+            result = [str(p) for p in parsed] + [fallback] * missing_count
+            return (
+                result,
+                [{
                     'error_type': 'PARTIAL_RESPONSE',
                     'message': f'Expected {expected_count} classifications, got {len(parsed)}',
                     'missing_count': missing_count,
                     'fallback_used': fallback,
                     'missing_indices': list(range(len(parsed), expected_count))
-                })
-                return result, errors
-
-            else:
-                # Too many - truncate with warning
-                result = [str(p) for p in parsed[:expected_count]]
-                errors.append({
+                }]
+            )
+        else:
+            # Too many - truncate
+            result = [str(p) for p in parsed[:expected_count]]
+            return (
+                result,
+                [{
                     'error_type': 'RESPONSE_TOO_LONG',
                     'message': f'Expected {expected_count} classifications, got {len(parsed)}. Truncated.',
                     'extra_count': len(parsed) - expected_count
-                })
-                return result, errors
-
-        except json.JSONDecodeError as e:
-            # JSON parsing failed - try to extract list from response
-            fallback = get_fallback_classification()
-
-            # Try to find list-like patterns in response
-            import re
-            list_pattern = r'\[([^\]]+)\]'
-            match = re.search(list_pattern, response)
-
-            if match:
-                # Found something that looks like a list - try to parse it
-                try:
-                    list_str = match.group(0)
-                    parsed = json.loads(list_str)
-                    if isinstance(parsed, list):
-                        # Recursive call with cleaned response
-                        return self._parse_multi_classification_response(
-                            list_str, expected_count, already_classified
-                        )
-                except:
-                    pass
-
-            # Complete failure - use fallback for all
-            errors.append({
-                'error_type': 'JSON_PARSE_FAILED',
-                'message': f'Failed to parse JSON: {str(e)}',
-                'fallback_used': fallback,
-                'raw_response': response[:500]
-            })
-            return [fallback] * expected_count, errors
+                }]
+            )
 
     def classify_with_tools(self, *args, **kwargs) -> ClassificationResult:
         """Alias for classify_transaction (backward compat)."""
@@ -855,26 +903,26 @@ class ExpertClassifier:
                     aggregated_data[field] = txn[field]
                     break
 
-        # Line descriptions: Deduplicate and take up to 5 unique values
+        # Line descriptions: Deduplicate and take up to configured limit
         line_descriptions = []
         for txn in invoice_transactions:
             if is_valid_value(txn.get('line_description')):
                 desc = str(txn['line_description']).strip()
                 if desc and desc not in line_descriptions:
                     line_descriptions.append(desc)
-                    if len(line_descriptions) >= 5:
+                    if len(line_descriptions) >= self.invoice_config.max_line_descriptions:
                         break
         if line_descriptions:
             aggregated_data['line_description'] = ' | '.join(line_descriptions)
 
-        # GL descriptions: Deduplicate and take up to 3 unique values
+        # GL descriptions: Deduplicate and take up to configured limit
         gl_descriptions = []
         for txn in invoice_transactions:
             if is_valid_value(txn.get('gl_description')):
                 gl_desc = str(txn['gl_description']).strip()
                 if gl_desc and gl_desc not in gl_descriptions:
                     gl_descriptions.append(gl_desc)
-                    if len(gl_descriptions) >= 3:
+                    if len(gl_descriptions) >= self.invoice_config.max_gl_descriptions:
                         break
         if gl_descriptions:
             aggregated_data['gl_description'] = ' | '.join(gl_descriptions)
@@ -915,8 +963,8 @@ class ExpertClassifier:
                 self._classifier = dspy.ChainOfThought(SpendClassificationSignature)
 
             try:
-                # Call LLM ONCE for entire batch
-                result = self._classifier(
+                # Call LLM ONCE for entire batch with retry logic
+                result = self._classify_batch_with_retry(
                     supplier_info=supplier_info,
                     transaction_info=invoice_info,
                     taxonomy_sample=taxonomy_sample,
@@ -961,56 +1009,15 @@ class ExpertClassifier:
             for transaction_data, classification_path in zip(batch_transactions, classification_paths):
                 reasoning = reasoning_base + " [Invoice-level batch processing]"
 
-                # Post-validate the classification path
-                validation_result = validate_path(classification_path, taxonomy_list)
-
-                if not validation_result.get('valid', False):
-                    similar_paths = validation_result.get('similar_paths', [])
-                    if similar_paths:
-                        classification_path = similar_paths[0]
-                        reasoning += f" [Corrected to valid path: {classification_path}]"
-                    else:
-                        # Fallback to most similar path from pre-search
-                        if l1_grouped_paths:
-                            all_presearched = []
-                            for paths in l1_grouped_paths.values():
-                                all_presearched.extend(paths)
-
-                            if all_presearched:
-                                best_path = max(all_presearched, key=lambda p: similarity_scores.get(p, 0))
-                                classification_path = best_path
-                                reasoning += f" [Invalid path corrected using pre-search results: {classification_path}]"
-                            else:
-                                classification_path = "Unknown"
-                                reasoning += " [Invalid path, no similar paths found]"
-                        else:
-                            classification_path = "Unknown"
-                            reasoning += " [Invalid path, no similar paths found]"
-
-                # Validate minimum depth (expand L1-only results)
-                if classification_path and "|" not in classification_path and classification_path != "Unknown":
-                    l1_category = classification_path
-                    l1_paths = [p for p in taxonomy_list if p.startswith(l1_category + "|")]
-
-                    if l1_paths:
-                        query_parts = []
-                        if is_valid_value(transaction_data.get('line_description')):
-                            query_parts.append(str(transaction_data['line_description']))
-                        if is_valid_value(transaction_data.get('gl_description')):
-                            query_parts.append(str(transaction_data['gl_description']))
-
-                        if query_parts:
-                            query = " ".join(query_parts[:2])
-                            matches = lookup_paths(str(query), l1_paths)
-                            if matches:
-                                classification_path = matches[0]
-                                reasoning += f" [Auto-expanded from L1 to: {classification_path}]"
-                            else:
-                                classification_path = l1_paths[0]
-                                reasoning += f" [Auto-expanded from L1 to: {classification_path}]"
-                        else:
-                            classification_path = l1_paths[0]
-                            reasoning += f" [Auto-expanded from L1 to: {classification_path}]"
+                # Post-validate and correct classification path
+                classification_path, reasoning = self._validate_and_correct_path(
+                    classification_path,
+                    taxonomy_list,
+                    l1_grouped_paths,
+                    similarity_scores,
+                    transaction_data,
+                    reasoning
+                )
 
                 # Track successful classification for future fallback
                 if classification_path != "Unknown":
@@ -1041,3 +1048,168 @@ class ExpertClassifier:
                 return majority[0]
         # Second fallback
         return "Unknown"
+    
+    def _validate_and_correct_path(
+        self,
+        classification_path: str,
+        taxonomy_list: List[str],
+        l1_grouped_paths: Optional[Dict[str, List[str]]],
+        similarity_scores: Optional[Dict[str, float]],
+        transaction_data: Dict,
+        reasoning: str
+    ) -> Tuple[str, str]:
+        """
+        Validate and correct classification path.
+
+        Args:
+            classification_path: Original classification path
+            taxonomy_list: List of valid taxonomy paths
+            l1_grouped_paths: Optional grouped paths from pre-search
+            similarity_scores: Optional similarity scores
+            transaction_data: Transaction data for expansion
+            reasoning: Current reasoning string
+
+        Returns:
+            Tuple of (corrected_path, updated_reasoning)
+        """
+        # Post-validate the classification path
+        validation_result = validate_path(classification_path, taxonomy_list)
+
+        if not validation_result.get('valid', False):
+            similar_paths = validation_result.get('similar_paths', [])
+            if similar_paths:
+                classification_path = similar_paths[0]
+                reasoning += f" [Corrected to valid path: {classification_path}]"
+            else:
+                # Fallback to most similar path from pre-search
+                classification_path, reasoning = self._fallback_to_presearched(
+                    classification_path,
+                    l1_grouped_paths,
+                    similarity_scores,
+                    reasoning
+                )
+
+        # Validate minimum depth (expand L1-only results)
+        if classification_path and "|" not in classification_path and classification_path != "Unknown":
+            classification_path, reasoning = self._expand_l1_path(
+                classification_path,
+                taxonomy_list,
+                transaction_data,
+                reasoning
+            )
+
+        return classification_path, reasoning
+    
+    def _fallback_to_presearched(
+        self,
+        classification_path: str,
+        l1_grouped_paths: Optional[Dict[str, List[str]]],
+        similarity_scores: Optional[Dict[str, float]],
+        reasoning: str
+    ) -> Tuple[str, str]:
+        """
+        Fallback to pre-searched paths when validation fails.
+
+        Args:
+            classification_path: Original path
+            l1_grouped_paths: Grouped paths from pre-search
+            similarity_scores: Similarity scores
+            reasoning: Current reasoning
+
+        Returns:
+            Tuple of (fallback_path, updated_reasoning)
+        """
+        if l1_grouped_paths:
+            all_presearched = []
+            for paths in l1_grouped_paths.values():
+                all_presearched.extend(paths)
+
+            if all_presearched:
+                best_path = max(all_presearched, key=lambda p: similarity_scores.get(p, 0) if similarity_scores else 0)
+                classification_path = best_path
+                reasoning += f" [Invalid path corrected using pre-search results: {classification_path}]"
+            else:
+                classification_path = "Unknown"
+                reasoning += " [Invalid path, no similar paths found]"
+        else:
+            classification_path = "Unknown"
+            reasoning += " [Invalid path, no similar paths found]"
+        
+        return classification_path, reasoning
+    
+    def _expand_l1_path(
+        self,
+        classification_path: str,
+        taxonomy_list: List[str],
+        transaction_data: Dict,
+        reasoning: str
+    ) -> Tuple[str, str]:
+        """
+        Expand L1-only classification to deeper path.
+
+        Args:
+            classification_path: L1-only path
+            taxonomy_list: List of valid taxonomy paths
+            transaction_data: Transaction data for semantic search
+            reasoning: Current reasoning
+
+        Returns:
+            Tuple of (expanded_path, updated_reasoning)
+        """
+        l1_category = classification_path
+        l1_paths = [p for p in taxonomy_list if p.startswith(l1_category + "|")]
+
+        if l1_paths:
+            query_parts = []
+            if is_valid_value(transaction_data.get('line_description')):
+                query_parts.append(str(transaction_data['line_description']))
+            if is_valid_value(transaction_data.get('gl_description')):
+                query_parts.append(str(transaction_data['gl_description']))
+
+            if query_parts:
+                query = " ".join(query_parts[:2])
+                matches = lookup_paths(str(query), l1_paths)
+                if matches:
+                    classification_path = matches[0]
+                    reasoning += f" [Auto-expanded from L1 to: {classification_path}]"
+                else:
+                    classification_path = l1_paths[0]
+                    reasoning += f" [Auto-expanded from L1 to: {classification_path}]"
+            else:
+                classification_path = l1_paths[0]
+                reasoning += f" [Auto-expanded from L1 to: {classification_path}]"
+        
+        return classification_path, reasoning
+    
+    @retry_with_backoff(max_retries=3, initial_delay=1.0, backoff_factor=2.0)
+    def _classify_batch_with_retry(
+        self,
+        supplier_info: str,
+        transaction_info: str,
+        taxonomy_sample: str,
+        prioritization: str,
+        domain_context: str,
+    ):
+        """
+        Classify batch with retry logic.
+
+        Args:
+            supplier_info: Formatted supplier information
+            transaction_info: Formatted transaction information
+            taxonomy_sample: Formatted taxonomy sample
+            prioritization: Prioritization strategy
+            domain_context: Domain context
+
+        Returns:
+            Classification result from LLM
+        """
+        if self._classifier is None:
+            self._classifier = dspy.ChainOfThought(SpendClassificationSignature)
+        
+        return self._classifier(
+            supplier_info=supplier_info,
+            transaction_info=transaction_info,
+            taxonomy_sample=taxonomy_sample,
+            prioritization=prioritization,
+            domain_context=domain_context,
+        )

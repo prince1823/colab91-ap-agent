@@ -16,6 +16,8 @@ from core.agents.context_prioritization.signature import ContextPrioritizationSi
 from core.agents.context_prioritization.model import PrioritizationDecision
 from core.utils.transaction_utils import is_valid_value
 from core.agents.taxonomy_rag import TaxonomyRetriever
+from core.utils.invoice_config import InvoiceProcessingConfig, DEFAULT_CONFIG
+from core.utils.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,9 @@ class ContextPrioritizationAgent:
         self._taxonomy_cache: Dict[str, Dict] = {}
         self._cache_lock = threading.Lock()
         self._taxonomy_retriever = TaxonomyRetriever()
+        
+        # Invoice processing configuration
+        self.invoice_config: InvoiceProcessingConfig = DEFAULT_CONFIG
     
     def _format_transaction_data(self, transaction_data: Dict[str, Any]) -> str:
         """Format transaction data for assessment - present all data neutrally.
@@ -293,19 +298,19 @@ class ContextPrioritizationAgent:
         has_gl_desc = gl_desc and is_valid_value(gl_desc)
         
         # Use similarity score to inform research decision
-        # Low similarity (< 0.3) suggests transaction doesn't match taxonomy well -> research needed
-        # High similarity (> 0.7) suggests clear match -> research may not be needed
+        # Low similarity (< threshold) suggests transaction doesn't match taxonomy well -> research needed
+        # High similarity (> threshold) suggests clear match -> research may not be needed
         similarity_should_research = None
         similarity_reasoning = ""
         
         if similarity_score is not None:
-            if similarity_score < 0.3:
+            if similarity_score < self.invoice_config.low_similarity_threshold:
                 similarity_should_research = True
                 similarity_reasoning = f"Low taxonomy similarity ({similarity_score:.2f}) - transaction doesn't match taxonomy well"
-            elif similarity_score > 0.7:
+            elif similarity_score > self.invoice_config.high_similarity_threshold:
                 similarity_should_research = False
                 similarity_reasoning = f"High taxonomy similarity ({similarity_score:.2f}) - clear taxonomy match"
-            # For medium scores (0.3-0.7), let other signals decide
+            # For medium scores, let other signals decide
         
         # Fast path: Always research if both are missing and no supplier profile
         if not supplier_profile and not has_line_desc and not has_gl_desc:
@@ -330,7 +335,7 @@ class ContextPrioritizationAgent:
             formatted_transaction += f"\n\nTaxonomy Similarity Score: {similarity_score:.2f} (0-1 scale, higher = better match)"
         
         try:
-            result = self.decision_agent(
+            result = self._assess_context_with_retry(
                 transaction_data=formatted_transaction,
                 supplier_name=supplier_name_str,
                 supplier_profile=supplier_profile_str,
@@ -341,10 +346,10 @@ class ContextPrioritizationAgent:
             # Override with similarity-based decision if similarity score strongly suggests it
             if similarity_should_research is not None:
                 # Use similarity score as a strong signal, but combine with LLM decision
-                if similarity_score < 0.3:
+                if similarity_score < self.invoice_config.low_similarity_threshold:
                     # Low similarity: strongly suggest research
                     should_research = True
-                elif similarity_score > 0.7 and not supplier_profile:
+                elif similarity_score > self.invoice_config.high_similarity_threshold and not supplier_profile:
                     # High similarity without supplier profile: research less critical
                     should_research = False
             
@@ -439,13 +444,13 @@ class ContextPrioritizationAgent:
                 desc = str(txn['line_description']).strip()
                 if desc and desc not in line_descriptions:
                     line_descriptions.append(desc)
-                    if len(line_descriptions) >= 5:  # Limit to 5
+                    if len(line_descriptions) >= self.invoice_config.max_line_descriptions:
                         break
             if is_valid_value(txn.get('gl_description')):
                 gl_desc = str(txn['gl_description']).strip()
                 if gl_desc and gl_desc not in gl_descriptions:
                     gl_descriptions.append(gl_desc)
-                    if len(gl_descriptions) >= 3:  # Limit to 3
+                    if len(gl_descriptions) >= self.invoice_config.max_gl_descriptions:
                         break
 
         # Combine descriptions (limit to avoid excessive token usage)
@@ -468,4 +473,28 @@ class ContextPrioritizationAgent:
         decision.reasoning += f" [Invoice-level assessment: {len(invoice_transactions)} line items]"
 
         return decision
+    
+    @retry_with_backoff(max_retries=3, initial_delay=1.0, backoff_factor=2.0)
+    def _assess_context_with_retry(
+        self,
+        transaction_data: str,
+        supplier_name: str,
+        supplier_profile: str,
+    ):
+        """
+        Assess context with retry logic.
+
+        Args:
+            transaction_data: Formatted transaction data
+            supplier_name: Supplier name
+            supplier_profile: Formatted supplier profile
+
+        Returns:
+            Prioritization decision from LLM
+        """
+        return self.decision_agent(
+            transaction_data=transaction_data,
+            supplier_name=supplier_name,
+            supplier_profile=supplier_profile,
+        )
 

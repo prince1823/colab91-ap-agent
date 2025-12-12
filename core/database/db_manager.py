@@ -8,7 +8,7 @@ import json
 import logging
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -121,6 +121,47 @@ class ClassificationDBManager:
                 result.usage_count += 1
                 return self._to_classification_result(result)
             return None
+
+    def batch_get_by_supplier_and_hash(
+        self, supplier_name: str, transaction_hashes: List[str], run_id: Optional[str] = None
+    ) -> Dict[str, ClassificationResult]:
+        """
+        Batch get classifications by supplier and multiple transaction hashes.
+        
+        More efficient than calling get_by_supplier_and_hash multiple times.
+        
+        Args:
+            supplier_name: Supplier name
+            transaction_hashes: List of transaction hashes to look up
+            run_id: Optional run_id to filter by (if None, searches across all runs)
+            
+        Returns:
+            Dictionary mapping transaction_hash -> ClassificationResult for found entries
+        """
+        if not transaction_hashes:
+            return {}
+            
+        normalized_name = self.normalize_supplier_name(supplier_name)
+        with self._get_session() as session:
+            query = (
+                session.query(SupplierClassification)
+                .filter(
+                    SupplierClassification.supplier_name == normalized_name,
+                    SupplierClassification.transaction_hash.in_(transaction_hashes),
+                )
+            )
+            # Filter by run_id if provided (scoped to current run)
+            if run_id:
+                query = query.filter(SupplierClassification.run_id == run_id)
+            
+            results = query.all()
+            result_dict = {}
+            for result in results:
+                # Increment usage count
+                result.usage_count += 1
+                result_dict[result.transaction_hash] = self._to_classification_result(result)
+            
+            return result_dict
 
     def get_supplier_profile(
         self, supplier_name: str, max_age_days: Optional[int] = None
@@ -275,6 +316,101 @@ class ClassificationDBManager:
                     usage_count=1,
                 )
                 session.add(new_entry)
+
+    def batch_store_classifications(
+        self,
+        supplier_name: str,
+        classifications: List[Tuple[str, ClassificationResult, Optional[Dict], Optional[Dict]]],
+        run_id: str,
+        dataset_name: Optional[str] = None,
+        supplier_profile: Optional[Dict] = None,
+    ):
+        """
+        Batch store multiple classification results in a single transaction.
+        
+        More efficient than calling store_classification multiple times.
+        
+        Args:
+            supplier_name: Supplier name
+            classifications: List of tuples (transaction_hash, classification_result, transaction_data, supplier_profile)
+            run_id: Run ID (UUID) to identify this run
+            dataset_name: Optional dataset name (e.g., "fox", "innova")
+            supplier_profile: Optional supplier profile snapshot (used if not provided per classification)
+        """
+        if not classifications:
+            return
+            
+        normalized_name = self.normalize_supplier_name(supplier_name)
+        
+        with self._get_session() as session:
+            # Build lookup map for existing entries
+            transaction_hashes = [txn_hash for txn_hash, _, _, _ in classifications if txn_hash]
+            existing_map = {}
+            if transaction_hashes:
+                existing_entries = (
+                    session.query(SupplierClassification)
+                    .filter(
+                        SupplierClassification.run_id == run_id,
+                        SupplierClassification.supplier_name == normalized_name,
+                        SupplierClassification.transaction_hash.in_(transaction_hashes),
+                    )
+                    .all()
+                )
+                existing_map = {entry.transaction_hash: entry for entry in existing_entries}
+            
+            # Process each classification
+            for transaction_hash, classification_result, transaction_data, txn_supplier_profile in classifications:
+                classification_path = self._build_classification_path(classification_result)
+                
+                # Extract confidence from reasoning if present
+                confidence = None
+                if classification_result.reasoning:
+                    if 'Confidence: high' in classification_result.reasoning:
+                        confidence = 'high'
+                    elif 'Confidence: medium' in classification_result.reasoning:
+                        confidence = 'medium'
+                    elif 'Confidence: low' in classification_result.reasoning:
+                        confidence = 'low'
+                
+                # Use per-transaction supplier profile if provided, otherwise use invoice-level one
+                profile_to_use = txn_supplier_profile if txn_supplier_profile is not None else supplier_profile
+                
+                if transaction_hash and transaction_hash in existing_map:
+                    # Update existing entry
+                    existing = existing_map[transaction_hash]
+                    existing.classification_path = classification_path
+                    existing.l1 = classification_result.L1
+                    existing.l2 = classification_result.L2
+                    existing.l3 = classification_result.L3
+                    existing.l4 = classification_result.L4
+                    existing.l5 = classification_result.L5
+                    existing.override_rule_applied = classification_result.override_rule_applied
+                    existing.reasoning = classification_result.reasoning
+                    existing.confidence = confidence
+                    existing.supplier_profile_snapshot = profile_to_use
+                    existing.transaction_data_snapshot = transaction_data
+                    existing.usage_count += 1
+                else:
+                    # Create new entry
+                    new_entry = SupplierClassification(
+                        run_id=run_id,
+                        dataset_name=dataset_name,
+                        supplier_name=normalized_name,
+                        transaction_hash=transaction_hash,
+                        classification_path=classification_path,
+                        l1=classification_result.L1,
+                        l2=classification_result.L2,
+                        l3=classification_result.L3,
+                        l4=classification_result.L4,
+                        l5=classification_result.L5,
+                        override_rule_applied=classification_result.override_rule_applied,
+                        reasoning=classification_result.reasoning,
+                        confidence=confidence,
+                        supplier_profile_snapshot=profile_to_use,
+                        transaction_data_snapshot=transaction_data,
+                        usage_count=1,
+                    )
+                    session.add(new_entry)
 
     def _to_classification_result(self, db_entry: SupplierClassification) -> ClassificationResult:
         """Convert database entry to ClassificationResult."""
