@@ -35,51 +35,68 @@ def init_database(db_path: Path, echo: bool = False):
 
 def _migrate_existing_database(engine):
     """
-    Migrate existing database to add run_id and dataset_name columns if they don't exist.
+    Migrate existing database to add run_id, dataset_name, and HITL columns if they don't exist.
     Sets default run_id for existing entries.
     """
     from sqlalchemy import inspect, text
-    
+
     try:
         inspector = inspect(engine)
-        columns = [col['name'] for col in inspector.get_columns('supplier_classifications')]
-        
-        # Add run_id column if it doesn't exist
-        if 'run_id' not in columns:
-            with engine.connect() as conn:
-                # SQLite doesn't support DEFAULT in ALTER TABLE, so add column then update
-                conn.execute(text("ALTER TABLE supplier_classifications ADD COLUMN run_id VARCHAR(36)"))
-                conn.execute(text("UPDATE supplier_classifications SET run_id = 'legacy' WHERE run_id IS NULL"))
-                conn.commit()
-        
-        # Add dataset_name column if it doesn't exist
-        if 'dataset_name' not in columns:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE supplier_classifications ADD COLUMN dataset_name VARCHAR(255)"))
-                conn.commit()
-        
-        # Create indexes if they don't exist
-        indexes = [idx['name'] for idx in inspector.get_indexes('supplier_classifications')]
-        
-        if 'idx_run_supplier_hash' not in indexes:
-            with engine.connect() as conn:
-                try:
-                    conn.execute(text(
-                        "CREATE INDEX IF NOT EXISTS idx_run_supplier_hash ON supplier_classifications(run_id, supplier_name, transaction_hash)"
-                    ))
+
+        # Check if supplier_classifications table exists
+        if 'supplier_classifications' in inspector.get_table_names():
+            columns = [col['name'] for col in inspector.get_columns('supplier_classifications')]
+
+            # Add run_id column if it doesn't exist
+            if 'run_id' not in columns:
+                with engine.connect() as conn:
+                    # SQLite doesn't support DEFAULT in ALTER TABLE, so add column then update
+                    conn.execute(text("ALTER TABLE supplier_classifications ADD COLUMN run_id VARCHAR(36)"))
+                    conn.execute(text("UPDATE supplier_classifications SET run_id = 'legacy' WHERE run_id IS NULL"))
                     conn.commit()
-                except Exception:
-                    pass  # Index might already exist
-        
-        if 'idx_run_supplier_l1' not in indexes:
-            with engine.connect() as conn:
-                try:
-                    conn.execute(text(
-                        "CREATE INDEX IF NOT EXISTS idx_run_supplier_l1 ON supplier_classifications(run_id, supplier_name, l1_category)"
-                    ))
+
+            # Add dataset_name column if it doesn't exist
+            if 'dataset_name' not in columns:
+                with engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE supplier_classifications ADD COLUMN dataset_name VARCHAR(255)"))
                     conn.commit()
-                except Exception:
-                    pass  # Index might already exist
+
+            # Add HITL supplier rule columns if they don't exist
+            hitl_columns = {
+                'supplier_rule_type': 'VARCHAR(20)',
+                'supplier_rule_paths': 'JSON',
+                'supplier_rule_created_at': 'DATETIME',
+                'supplier_rule_active': 'BOOLEAN'
+            }
+
+            for col_name, col_type in hitl_columns.items():
+                if col_name not in columns:
+                    with engine.connect() as conn:
+                        conn.execute(text(f"ALTER TABLE supplier_classifications ADD COLUMN {col_name} {col_type}"))
+                        conn.commit()
+
+            # Create indexes if they don't exist
+            indexes = [idx['name'] for idx in inspector.get_indexes('supplier_classifications')]
+
+            if 'idx_run_supplier_hash' not in indexes:
+                with engine.connect() as conn:
+                    try:
+                        conn.execute(text(
+                            "CREATE INDEX IF NOT EXISTS idx_run_supplier_hash ON supplier_classifications(run_id, supplier_name, transaction_hash)"
+                        ))
+                        conn.commit()
+                    except Exception:
+                        pass  # Index might already exist
+
+            if 'idx_run_supplier_l1' not in indexes:
+                with engine.connect() as conn:
+                    try:
+                        conn.execute(text(
+                            "CREATE INDEX IF NOT EXISTS idx_run_supplier_l1 ON supplier_classifications(run_id, supplier_name, l1_category)"
+                        ))
+                        conn.commit()
+                    except Exception:
+                        pass  # Index might already exist
     except Exception:
         # Table might not exist yet (new database), that's fine
         pass
