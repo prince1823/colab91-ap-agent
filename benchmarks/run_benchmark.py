@@ -121,6 +121,13 @@ def process_single_dataset(dataset_dir: Path):
                 # Extract reasoning from result
                 reasoning = result_row.get('reasoning', '') if 'reasoning' in result_row else ""
                 
+                # Extract prioritization decision fields
+                should_research = result_row.get('should_research', '') if 'should_research' in result_row else ""
+                prioritization_strategy = result_row.get('prioritization_strategy', '') if 'prioritization_strategy' in result_row else ""
+                supplier_context_strength = result_row.get('supplier_context_strength', '') if 'supplier_context_strength' in result_row else ""
+                transaction_data_quality = result_row.get('transaction_data_quality', '') if 'transaction_data_quality' in result_row else ""
+                prioritization_reasoning = result_row.get('prioritization_reasoning', '') if 'prioritization_reasoning' in result_row else ""
+                
                 row_data.update({
                     'expected_output': expected_output,
                     'pipeline_output': pipeline_output,
@@ -128,16 +135,26 @@ def process_single_dataset(dataset_dir: Path):
                     'supplier_profile': supplier_profile_json,
                     'reasoning': reasoning,
                     'error': error_msg,
+                    'should_research': should_research,
+                    'prioritization_strategy': prioritization_strategy,
+                    'supplier_context_strength': supplier_context_strength,
+                    'transaction_data_quality': transaction_data_quality,
+                    'prioritization_reasoning': prioritization_reasoning,
                 })
             else:
                 row_data.update({
-                    'expected_output': expected_output,
-                    'pipeline_output': "",
-                    'columns_used': "",
-                    'supplier_profile': "",
-                    'reasoning': "",
-                    'error': "No result returned from pipeline for this row",
-                })
+                'expected_output': expected_output,
+                'pipeline_output': "",
+                'columns_used': "",
+                'supplier_profile': "",
+                'reasoning': "",
+                'error': "No result returned from pipeline for this row",
+                'should_research': "",
+                'prioritization_strategy': "",
+                'supplier_context_strength': "",
+                'transaction_data_quality': "",
+                'prioritization_reasoning': "",
+            })
             
             results_data.append(row_data)
     
@@ -155,6 +172,11 @@ def process_single_dataset(dataset_dir: Path):
                 'supplier_profile': "",
                 'reasoning': "",
                 'error': str(e),
+                'should_research': "",
+                'prioritization_strategy': "",
+                'supplier_context_strength': "",
+                'transaction_data_quality': "",
+                'prioritization_reasoning': "",
             })
             results_data.append(row_data)
     

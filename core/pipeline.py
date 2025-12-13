@@ -223,7 +223,7 @@ class SpendClassificationPipeline:
         taxonomy: str,
         run_id: str,
         dataset_name: Optional[str] = None,
-    ) -> Tuple[Dict[int, ClassificationResult], List[Dict]]:
+    ) -> Tuple[Dict[int, ClassificationResult], List[Dict], Optional[PrioritizationDecision]]:
         """
         Classify all rows in an invoice together.
 
@@ -242,10 +242,11 @@ class SpendClassificationPipeline:
             dataset_name: Optional dataset name
 
         Returns:
-            Tuple of (position_to_result_dict, errors_list)
+            Tuple of (position_to_result_dict, errors_list, prioritization_decision)
         """
         results = {}
         errors = []
+        prioritization_decision = None
 
         # Extract supplier name from any row (check all rows, not just first)
         supplier_name = None
@@ -295,10 +296,10 @@ class SpendClassificationPipeline:
             # No db_manager, all rows are uncached
             uncached_rows = list(invoice_rows)
 
-        # If all rows cached, we're done
+        # If all rows cached, we're done (no prioritization decision needed)
         if not uncached_rows:
             logger.debug(f"Invoice {invoice_key}: All {len(invoice_rows)} rows cached")
-            return results, errors
+            return results, errors, None
 
         logger.debug(f"Invoice {invoice_key}: {len(uncached_rows)} uncached rows (out of {len(invoice_rows)})")
 
@@ -324,7 +325,7 @@ class SpendClassificationPipeline:
                     invoice_key=sanitize_invoice_key(invoice_key)
                 )
                 errors.append(error.to_dict())
-            return results, errors
+            return results, errors, None
 
         # Step 3: Supplier Research (if needed)
         supplier_profile = None
@@ -369,7 +370,7 @@ class SpendClassificationPipeline:
                             invoice_key=sanitize_invoice_key(invoice_key)
                         )
                         errors.append(error.to_dict())
-                    return results, errors
+                    return results, errors, prioritization_decision
         else:
             # Minimal supplier profile
             supplier_profile = {
@@ -425,7 +426,7 @@ class SpendClassificationPipeline:
                     invoice_key=sanitize_invoice_key(invoice_key)
                 )
                 errors.append(error.to_dict())
-            return results, errors
+            return results, errors, prioritization_decision
 
         # Step 5: Validate results and prepare for batch storage
         valid_classifications = []
@@ -486,7 +487,7 @@ class SpendClassificationPipeline:
                 # Log error but don't fail the entire invoice - results are still valid
                 logger.warning(f"Failed to batch store classification results for invoice {invoice_key}: {e}")
 
-        return results, errors
+        return results, errors, prioritization_decision
     
     def _validate_classification_result(self, result: ClassificationResult, taxonomy: str) -> bool:
         """
@@ -557,6 +558,13 @@ class SpendClassificationPipeline:
         # Step 3: Process each invoice (with multi-level caching and parallel processing)
         classification_results = [None] * len(canonical_df)
         errors = []
+        # Track prioritization decisions per invoice (invoice_key -> PrioritizationDecision)
+        prioritization_decisions = {}
+        # Build invoice_key to position mapping for prioritization decisions
+        invoice_key_to_positions = {}
+        for invoice_key, invoice_rows in invoices.items():
+            positions = [pos for pos, _, _ in invoice_rows]
+            invoice_key_to_positions[invoice_key] = positions
 
         print(f"Processing {len(invoices)} invoices with {len(canonical_df)} total rows (max_workers={max_workers})")
         
@@ -584,10 +592,14 @@ class SpendClassificationPipeline:
                     idx, invoice_key, invoice_rows = future_to_invoice[future]
                     completed += 1
                     try:
-                        invoice_results, invoice_errors = future.result()
+                        invoice_results, invoice_errors, invoice_prioritization = future.result()
                         
                         if invoice_errors:
                             logger.warning(f"Invoice {invoice_key} had {len(invoice_errors)} errors")
+                        
+                        # Store prioritization decision for this invoice
+                        if invoice_prioritization:
+                            prioritization_decisions[invoice_key] = invoice_prioritization
                         
                         # Merge results into master results list
                         for pos, result in invoice_results.items():
@@ -615,7 +627,7 @@ class SpendClassificationPipeline:
             # Sequential processing (for max_workers=1 or single invoice)
             for idx, (invoice_key, invoice_rows) in enumerate(invoices.items(), 1):
                 print(f"Processing invoice {idx}/{len(invoices)}: {invoice_key} ({len(invoice_rows)} rows)")
-                invoice_results, invoice_errors = self._classify_invoice(
+                invoice_results, invoice_errors, invoice_prioritization = self._classify_invoice(
                     invoice_key=invoice_key,
                     invoice_rows=invoice_rows,
                     taxonomy=taxonomy,
@@ -625,6 +637,10 @@ class SpendClassificationPipeline:
                 if invoice_errors:
                     print(f"WARNING: Invoice {invoice_key} had {len(invoice_errors)} errors")
                 print(f"Completed invoice {idx}/{len(invoices)}: {invoice_key}")
+
+                # Store prioritization decision for this invoice
+                if invoice_prioritization:
+                    prioritization_decisions[invoice_key] = invoice_prioritization
 
                 # Merge results into master results list
                 for pos, result in invoice_results.items():
@@ -666,6 +682,44 @@ class SpendClassificationPipeline:
             r.override_rule_applied if r and hasattr(r, 'override_rule_applied') and r.override_rule_applied else None for r in classification_results
         ]
         result_df['reasoning'] = [r.reasoning if r and hasattr(r, 'reasoning') and r.reasoning else None for r in classification_results]
+        
+        # Add prioritization decision fields
+        # Map each position to its invoice_key, then to its prioritization decision
+        position_to_invoice_key = {}
+        for invoice_key, positions in invoice_key_to_positions.items():
+            for pos in positions:
+                position_to_invoice_key[pos] = invoice_key
+        
+        result_df['should_research'] = [
+            prioritization_decisions.get(position_to_invoice_key.get(pos, None), None).should_research 
+            if position_to_invoice_key.get(pos, None) in prioritization_decisions and prioritization_decisions.get(position_to_invoice_key.get(pos, None), None) is not None
+            else None
+            for pos in range(len(result_df))
+        ]
+        result_df['prioritization_strategy'] = [
+            prioritization_decisions.get(position_to_invoice_key.get(pos, None), None).prioritization_strategy 
+            if position_to_invoice_key.get(pos, None) in prioritization_decisions and prioritization_decisions.get(position_to_invoice_key.get(pos, None), None) is not None
+            else None
+            for pos in range(len(result_df))
+        ]
+        result_df['supplier_context_strength'] = [
+            prioritization_decisions.get(position_to_invoice_key.get(pos, None), None).supplier_context_strength 
+            if position_to_invoice_key.get(pos, None) in prioritization_decisions and prioritization_decisions.get(position_to_invoice_key.get(pos, None), None) is not None
+            else None
+            for pos in range(len(result_df))
+        ]
+        result_df['transaction_data_quality'] = [
+            prioritization_decisions.get(position_to_invoice_key.get(pos, None), None).transaction_data_quality 
+            if position_to_invoice_key.get(pos, None) in prioritization_decisions and prioritization_decisions.get(position_to_invoice_key.get(pos, None), None) is not None
+            else None
+            for pos in range(len(result_df))
+        ]
+        result_df['prioritization_reasoning'] = [
+            prioritization_decisions.get(position_to_invoice_key.get(pos, None), None).reasoning 
+            if position_to_invoice_key.get(pos, None) in prioritization_decisions and prioritization_decisions.get(position_to_invoice_key.get(pos, None), None) is not None
+            else None
+            for pos in range(len(result_df))
+        ]
 
         # Add error column - match errors to their corresponding positions
         result_df['error'] = [
