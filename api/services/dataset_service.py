@@ -1,8 +1,8 @@
 """Dataset service for managing datasets with storage abstraction."""
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import HTTPException
+import pandas as pd
 
 from api.exceptions import DatasetNotFoundError, InvalidDatasetIdError, TransactionNotFoundError
 from api.storage.base import StorageBackend
@@ -124,4 +124,142 @@ class DatasetService:
             List of dataset info dicts
         """
         return self.storage.list_datasets(foldername)
+
+    def create_dataset(
+        self,
+        dataset_id: str,
+        transactions_df: pd.DataFrame,
+        taxonomy_data: Dict[str, Any],
+        foldername: str = "default",
+        csv_filename: Optional[str] = None
+    ) -> Dict:
+        """
+        Create a new dataset with transactions CSV and taxonomy YAML.
+
+        Args:
+            dataset_id: Dataset identifier
+            transactions_df: DataFrame with transaction data
+            taxonomy_data: Dictionary with taxonomy structure
+            foldername: Folder name
+
+        Returns:
+            Dictionary with dataset info
+
+        Raises:
+            ValueError: If dataset already exists or data is invalid
+        """
+        if self.storage.exists(dataset_id, foldername):
+            raise ValueError(f"Dataset '{dataset_id}' already exists in folder '{foldername}'")
+
+        # Write CSV with optional custom filename
+        self.storage.write_csv(dataset_id, transactions_df, foldername, csv_filename=csv_filename)
+
+        # Write YAML
+        self.storage.write_yaml(dataset_id, taxonomy_data, foldername)
+
+        return {
+            "dataset_id": dataset_id,
+            "foldername": foldername,
+            "row_count": len(transactions_df),
+        }
+
+    def update_dataset_csv(
+        self,
+        dataset_id: str,
+        transactions_df: pd.DataFrame,
+        foldername: str = "default"
+    ) -> Dict:
+        """
+        Update the transactions CSV for a dataset.
+
+        Args:
+            dataset_id: Dataset identifier
+            transactions_df: DataFrame with updated transaction data
+            foldername: Folder name
+
+        Returns:
+            Dictionary with updated dataset info
+
+        Raises:
+            DatasetNotFoundError: If dataset does not exist
+        """
+        if not self.storage.exists(dataset_id, foldername):
+            raise DatasetNotFoundError(f"Dataset '{dataset_id}' not found in folder '{foldername}'")
+
+        self.storage.write_csv(dataset_id, transactions_df, foldername)
+
+        return {
+            "dataset_id": dataset_id,
+            "foldername": foldername,
+            "row_count": len(transactions_df),
+        }
+
+    def update_dataset_taxonomy(
+        self,
+        dataset_id: str,
+        taxonomy_data: Dict[str, Any],
+        foldername: str = "default"
+    ) -> Dict:
+        """
+        Update the taxonomy YAML for a dataset.
+
+        Args:
+            dataset_id: Dataset identifier
+            taxonomy_data: Dictionary with updated taxonomy structure
+            foldername: Folder name
+
+        Returns:
+            Dictionary with dataset info
+
+        Raises:
+            DatasetNotFoundError: If dataset does not exist
+        """
+        if not self.storage.exists(dataset_id, foldername):
+            raise DatasetNotFoundError(f"Dataset '{dataset_id}' not found in folder '{foldername}'")
+
+        self.storage.write_yaml(dataset_id, taxonomy_data, foldername)
+
+        return {
+            "dataset_id": dataset_id,
+            "foldername": foldername,
+        }
+
+    def get_dataset_taxonomy(
+        self,
+        dataset_id: str,
+        foldername: str = "default"
+    ) -> Dict[str, Any]:
+        """
+        Get taxonomy YAML for a dataset.
+
+        Args:
+            dataset_id: Dataset identifier
+            foldername: Folder name
+
+        Returns:
+            Dictionary with taxonomy structure
+
+        Raises:
+            DatasetNotFoundError: If dataset or taxonomy does not exist
+        """
+        try:
+            return self.storage.read_yaml(dataset_id, foldername)
+        except FileNotFoundError as e:
+            raise DatasetNotFoundError(str(e))
+
+    def delete_dataset(self, dataset_id: str, foldername: str = "default") -> None:
+        """
+        Delete a dataset (both CSV and YAML files).
+
+        Args:
+            dataset_id: Dataset identifier
+            foldername: Folder name
+
+        Raises:
+            DatasetNotFoundError: If dataset does not exist
+        """
+        if not self.storage.exists(dataset_id, foldername):
+            raise DatasetNotFoundError(f"Dataset '{dataset_id}' not found in folder '{foldername}'")
+
+        self.storage.delete_dataset(dataset_id, foldername)
 

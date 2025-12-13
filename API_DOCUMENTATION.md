@@ -87,6 +87,285 @@ curl "http://localhost:8000/api/v1/datasets/innova?foldername=default"
 
 ---
 
+## Classification Workflow API
+
+The classification workflow is a 3-stage process:
+1. **Canonicalization** - Map client columns to canonical schema
+2. **Verification** - Human review and modification (add/remove columns, fix mappings)
+3. **Classification** - Run full classification on verified dataset
+
+### Start Canonicalization
+**POST** `/datasets/{dataset_id}/canonicalize`
+
+Start the canonicalization stage for a dataset. This maps client-specific column names to the canonical schema.
+
+**Path Parameters:**
+- `dataset_id` (required, string): Dataset identifier (e.g., "innova", "fox")
+
+**Query Parameters:**
+- `foldername` (optional, string, default: "default"): Folder name
+
+**Response:** `200 OK`
+```json
+{
+  "dataset_id": "innova",
+  "foldername": "default",
+  "status": "canonicalized",
+  "mapping_result": {
+    "mappings": {
+      "Vendor": "supplier_name",
+      "Amount": "amount",
+      "Date": "transaction_date"
+    },
+    "unmapped_columns": ["internal_id"],
+    "validation_passed": true
+  }
+}
+```
+
+**Example:**
+```bash
+curl -X POST "http://localhost:8000/api/v1/datasets/innova/canonicalize?foldername=default"
+```
+
+---
+
+### Get Canonicalization for Review
+**GET** `/datasets/{dataset_id}/canonicalization`
+
+Get canonicalization results for human review. Returns mappings, current columns, and paths for inspection.
+
+**Path Parameters:**
+- `dataset_id` (required, string): Dataset identifier
+
+**Query Parameters:**
+- `foldername` (optional, string, default: "default"): Folder name
+
+**Response:** `200 OK`
+```json
+{
+  "dataset_id": "innova",
+  "foldername": "default",
+  "canonicalization_result": {
+    "mappings": {
+      "Vendor": "supplier_name",
+      "Amount": "amount",
+      "Date": "transaction_date"
+    },
+    "unmapped_columns": ["internal_id"],
+    "validation_passed": true,
+    "validation_errors": []
+  },
+  "canonicalized_csv_path": "/path/to/datasets/default/innova/canonicalized.csv",
+  "current_canonical_columns": [
+    "supplier_name",
+    "amount",
+    "transaction_date",
+    "line_description"
+  ]
+}
+```
+
+**Example:**
+```bash
+curl "http://localhost:8000/api/v1/datasets/innova/canonicalization?foldername=default"
+```
+
+---
+
+### Verify Canonicalization (Human-in-the-Loop)
+**POST** `/datasets/{dataset_id}/verify`
+
+Approve canonicalization with optional modifications. This is the human-in-the-loop step where you can:
+- **Update column mappings** (correct LLM mistakes)
+- **Add missing columns** important for classification (with default values)
+- **Remove unwanted columns** that shouldn't be processed
+
+**Path Parameters:**
+- `dataset_id` (required, string): Dataset identifier
+
+**Query Parameters:**
+- `foldername` (optional, string, default: "default"): Folder name
+
+**Request Body:**
+```json
+{
+  "approved_mappings": {
+    "Vendor": "supplier_name",
+    "Amt": "amount"
+  },
+  "columns_to_add": [
+    {
+      "canonical_name": "invoice_date",
+      "default_value": "",
+      "description": "Invoice date for better classification"
+    },
+    {
+      "canonical_name": "department",
+      "default_value": "Unknown",
+      "description": "Department code"
+    }
+  ],
+  "columns_to_remove": [
+    "internal_reference",
+    "temp_column"
+  ],
+  "notes": "Added invoice_date and department columns, removed internal references",
+  "auto_approve": false
+}
+```
+
+**Request Body Fields:**
+- `approved_mappings` (optional, object): Updated column mappings `{client_col: canonical_col}`
+- `columns_to_add` (optional, array): Columns to add. Each object should have:
+  - `canonical_name` (required, string): Canonical column name
+  - `default_value` (optional, any): Default value for all rows (default: "")
+  - `description` (optional, string): Description of the column
+- `columns_to_remove` (optional, array): List of canonical column names to remove
+- `notes` (optional, string): Verification notes
+- `auto_approve` (optional, bool, default: false): Auto-approve without human review (for benchmarks)
+
+**Response:** `200 OK`
+```json
+{
+  "status": "verified",
+  "message": "Canonicalization approved"
+}
+```
+
+**Example - Add Missing Column:**
+```bash
+curl -X POST "http://localhost:8000/api/v1/datasets/innova/verify?foldername=default" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "columns_to_add": [
+      {
+        "canonical_name": "cost_center",
+        "default_value": "0000",
+        "description": "Cost center for spend categorization"
+      }
+    ],
+    "notes": "Added cost_center column for better classification"
+  }'
+```
+
+**Example - Remove Unwanted Columns:**
+```bash
+curl -X POST "http://localhost:8000/api/v1/datasets/innova/verify?foldername=default" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "columns_to_remove": [
+      "internal_id",
+      "batch_number",
+      "processing_timestamp"
+    ],
+    "notes": "Removed internal tracking columns"
+  }'
+```
+
+**Example - Combined Modifications:**
+```bash
+curl -X POST "http://localhost:8000/api/v1/datasets/innova/verify?foldername=default" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "approved_mappings": {
+      "ClientVendor": "supplier_name"
+    },
+    "columns_to_add": [
+      {
+        "canonical_name": "project_code",
+        "default_value": ""
+      }
+    ],
+    "columns_to_remove": ["temp_field", "debug_column"],
+    "notes": "Fixed vendor mapping, added project_code, removed debug columns"
+  }'
+```
+
+**Example - Auto-approve (for benchmarks):**
+```bash
+curl -X POST "http://localhost:8000/api/v1/datasets/innova/verify?foldername=default" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "auto_approve": true
+  }'
+```
+
+---
+
+### Start Classification
+**POST** `/datasets/{dataset_id}/classify`
+
+Start the classification stage on a verified canonicalized dataset. This runs the full classification pipeline with supplier research and expert classification.
+
+**Path Parameters:**
+- `dataset_id` (required, string): Dataset identifier
+
+**Query Parameters:**
+- `foldername` (optional, string, default: "default"): Folder name
+- `max_workers` (optional, int, default: 4, min: 1, max: 16): Number of parallel workers
+
+**Response:** `200 OK`
+```json
+{
+  "status": "completed",
+  "dataset_id": "innova",
+  "foldername": "default",
+  "row_count": 256,
+  "message": "Classification completed successfully"
+}
+```
+
+**Example:**
+```bash
+curl -X POST "http://localhost:8000/api/v1/datasets/innova/classify?foldername=default&max_workers=4"
+```
+
+---
+
+### Get Workflow Status
+**GET** `/datasets/{dataset_id}/status`
+
+Get the current workflow status for a dataset. Shows which stage the dataset is in and relevant paths.
+
+**Path Parameters:**
+- `dataset_id` (required, string): Dataset identifier
+
+**Query Parameters:**
+- `foldername` (optional, string, default: "default"): Folder name
+
+**Response:** `200 OK`
+```json
+{
+  "dataset_id": "innova",
+  "foldername": "default",
+  "status": "verified",
+  "canonicalized_csv_path": "/path/to/datasets/default/innova/canonicalized.csv",
+  "classification_result_path": null,
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "error_message": null,
+  "created_at": "2024-01-15T10:00:00",
+  "updated_at": "2024-01-15T10:05:00"
+}
+```
+
+**Status Values:**
+- `pending` - Not started
+- `canonicalizing` - Currently running canonicalization
+- `canonicalized` - Canonicalization complete, awaiting verification
+- `awaiting_verification` - Ready for human review
+- `verified` - Verified and ready for classification
+- `classifying` - Currently running classification
+- `completed` - All stages complete
+- `failed` - Error occurred
+
+**Example:**
+```bash
+curl "http://localhost:8000/api/v1/datasets/innova/status?foldername=default"
+```
+
+---
+
 ## Transactions API
 
 ### Query Transactions
@@ -855,4 +1134,10 @@ These provide interactive documentation where you can test endpoints directly fr
 5. **Direct Mappings**: Skip LLM classification entirely - return stored path immediately.
 
 6. **Taxonomy Constraints**: Replace RAG retrieval with stored list - LLM still classifies but only from allowed paths.
+
+7. **Classification Workflow**: The workflow is decoupled into three stages:
+   - **Canonicalization**: Maps client columns to canonical schema (automated)
+   - **Verification**: Human review where you can add/remove columns and fix mappings
+   - **Classification**: Runs full classification on verified dataset
+   - Workflow state is tracked in the database and can be paused/resumed at any stage
 

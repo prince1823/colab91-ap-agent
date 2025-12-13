@@ -38,8 +38,13 @@ def get_storage_backend() -> StorageBackend:
         return S3StorageBackend(bucket_name=bucket, prefix=prefix)
 
     elif storage_type == "local":
-        base_dir_str = getattr(config, "local_base_dir", "benchmarks")
-        base_dir = Path(base_dir_str)
+        # Use datasets_dir for new datasets, but support benchmarks for backward compatibility
+        datasets_dir = getattr(config, "datasets_dir", None)
+        if datasets_dir:
+            base_dir = Path(datasets_dir)
+        else:
+            base_dir_str = getattr(config, "local_base_dir", "benchmarks")
+            base_dir = Path(base_dir_str)
         return LocalStorageBackend(base_dir=base_dir)
 
     else:

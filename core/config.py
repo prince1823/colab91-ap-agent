@@ -87,6 +87,7 @@ class AppConfig(BaseSettings):
     # Data paths
     data_dir: Path = Field(default=Path("data"), alias="DATA_DIR")
     results_dir: Path = Field(default=Path("results"), alias="RESULTS_DIR")
+    datasets_dir: Path = Field(default=Path("datasets"), alias="DATASETS_DIR")
     
     # Database configuration
     database_path: Path = Field(
@@ -150,6 +151,7 @@ class AppConfig(BaseSettings):
         # Ensure directories exist
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.results_dir.mkdir(parents=True, exist_ok=True)
+        self.datasets_dir.mkdir(parents=True, exist_ok=True)
         self.dspy.cache_dir.mkdir(parents=True, exist_ok=True)
         # Ensure database directory exists
         self.database_path.parent.mkdir(parents=True, exist_ok=True)

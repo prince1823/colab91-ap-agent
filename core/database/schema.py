@@ -38,11 +38,17 @@ def _migrate_existing_database(engine):
     Migrate existing database to add run_id, dataset_name, and HITL columns if they don't exist.
     Sets default run_id for existing entries.
     Also creates indexes and unique constraints for supplier rules tables if they don't exist.
+    Creates dataset_processing_states table if it doesn't exist.
     """
     from sqlalchemy import inspect, text
 
     try:
         inspector = inspect(engine)
+        
+        # Create dataset_processing_states table if it doesn't exist
+        if 'dataset_processing_states' not in inspector.get_table_names():
+            from core.database.models import DatasetProcessingState
+            DatasetProcessingState.__table__.create(engine, checkfirst=True)
 
         # Migrate supplier rules tables (direct mappings and taxonomy constraints)
         for table_name in ['supplier_direct_mappings', 'supplier_taxonomy_constraints']:

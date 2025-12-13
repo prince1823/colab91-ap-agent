@@ -1,7 +1,7 @@
 """Pydantic request models for HITL API."""
 
 import re
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -146,3 +146,78 @@ class UpdateTransactionRequest(BaseModel):
 
     classification_path: str = Field(..., description="Updated classification path (L1|L2|L3|L4|L5)")
     override_rule_applied: Optional[str] = Field(None, description="Optional rule identifier that was applied")
+
+
+# ==================== Dataset CRUD Requests ====================
+
+class CreateDatasetRequest(BaseModel):
+    """Request model for creating a dataset."""
+
+    dataset_id: str = Field(..., description="Dataset identifier", min_length=1, max_length=255)
+    foldername: str = Field(default="default", description="Folder name")
+    transactions: List[Dict[str, Any]] = Field(..., description="List of transaction records")
+    taxonomy: Dict[str, Any] = Field(..., description="Taxonomy structure as dictionary")
+    csv_filename: Optional[str] = Field(
+        default="transactions.csv",
+        description="CSV filename (default: transactions.csv). Must end with .csv"
+    )
+
+    @field_validator("dataset_id")
+    @classmethod
+    def validate_dataset_id(cls, v: str) -> str:
+        """Validate dataset ID format."""
+        if not re.match(r"^[a-zA-Z0-9_.-]+$", v):
+            raise ValueError("dataset_id can only contain alphanumeric characters, underscore, hyphen, and dot")
+        return v
+
+    @field_validator("foldername")
+    @classmethod
+    def validate_foldername(cls, v: str) -> str:
+        """Validate foldername format."""
+        if not re.match(r"^[a-zA-Z0-9_.-]+$", v):
+            raise ValueError("foldername can only contain alphanumeric characters, underscore, hyphen, and dot")
+        return v
+
+    @field_validator("csv_filename")
+    @classmethod
+    def validate_csv_filename(cls, v: Optional[str]) -> Optional[str]:
+        """Validate CSV filename format."""
+        if v is None:
+            return "transactions.csv"
+        if not v.endswith(".csv"):
+            raise ValueError("csv_filename must end with .csv")
+        if not re.match(r"^[a-zA-Z0-9_.-]+$", v):
+            raise ValueError("csv_filename can only contain alphanumeric characters, underscore, hyphen, and dot")
+        return v
+
+
+class UpdateDatasetCSVRequest(BaseModel):
+    """Request model for updating dataset CSV."""
+
+    transactions: List[Dict[str, Any]] = Field(..., description="List of updated transaction records")
+
+
+class UpdateDatasetTaxonomyRequest(BaseModel):
+    """Request model for updating dataset taxonomy."""
+
+    taxonomy: Dict[str, Any] = Field(..., description="Updated taxonomy structure as dictionary")
+
+
+# ==================== Classification Workflow Requests ====================
+
+class VerifyCanonicalizationRequest(BaseModel):
+    """Request model for verifying canonicalization."""
+
+    approved_mappings: Optional[Dict[str, str]] = Field(
+        None, description="Optional updated column mappings (if user made changes)"
+    )
+    columns_to_add: Optional[List[Dict[str, Any]]] = Field(
+        None,
+        description="List of columns to add. Each dict should have: {'canonical_name': str, 'default_value': Any, 'description': Optional[str]}"
+    )
+    columns_to_remove: Optional[List[str]] = Field(
+        None,
+        description="List of canonical column names to remove from the dataset"
+    )
+    notes: Optional[str] = Field(None, description="Optional verification notes")
+    auto_approve: bool = Field(False, description="Auto-approve without human review (for benchmarks)")

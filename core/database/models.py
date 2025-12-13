@@ -189,3 +189,39 @@ class SupplierTaxonomyConstraint(Base):
     def __repr__(self):
         return f"<SupplierTaxonomyConstraint(id={self.id}, supplier={self.supplier_name}, paths_count={len(self.allowed_taxonomy_paths) if isinstance(self.allowed_taxonomy_paths, list) else 0})>"
 
+
+class DatasetProcessingState(Base):
+    """Track dataset processing workflow state."""
+    
+    __tablename__ = "dataset_processing_states"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dataset_id = Column(String(255), nullable=False)
+    foldername = Column(String(255), nullable=False, default="default")
+    
+    # Workflow state
+    status = Column(String(50), nullable=False, default="pending")
+    # Values: "pending", "canonicalizing", "canonicalized", "awaiting_verification",
+    #         "verified", "classifying", "completed", "failed"
+    
+    # Stage outputs (stored as JSON)
+    canonicalization_result = Column(JSON, nullable=True)  # MappingResult dict
+    canonicalized_csv_path = Column(String(500), nullable=True)
+    verification_notes = Column(Text, nullable=True)
+    classification_result_path = Column(String(500), nullable=True)
+    
+    # Metadata
+    run_id = Column(String(36), nullable=True)  # UUID
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    __table_args__ = (
+        UniqueConstraint('dataset_id', 'foldername', name='uq_dataset_processing'),
+        Index('idx_processing_status', 'status'),
+        Index('idx_processing_dataset', 'dataset_id', 'foldername'),
+    )
+    
+    def __repr__(self):
+        return f"<DatasetProcessingState(dataset={self.dataset_id}, status={self.status})>"
+

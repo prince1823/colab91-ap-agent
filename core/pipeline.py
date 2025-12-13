@@ -1,13 +1,12 @@
 """Spend Classification Pipeline
 
-Orchestrates column canonicalization, supplier research, and spend classification agents.
+DEPRECATED: This module is deprecated. Use the new workflow services instead:
+- core.classification.services.canonicalization_service.CanonicalizationService
+- core.classification.services.verification_service.VerificationService
+- core.classification.services.classification_service.ClassificationService
 
-Simplified 5-step pipeline:
-1. Canonicalization
-2. Context Prioritization (decide if research is needed)
-3. Supplier Research (if needed)
-4. Expert Classification (single-shot L1-L5)
-5. Store results
+This pipeline now only handles classification (expects canonicalized input).
+For full workflow including canonicalization, use the new services.
 """
 
 import logging
@@ -20,7 +19,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-from core.agents.column_canonicalization import ColumnCanonicalizationAgent, MappingResult
+# NOTE: ColumnCanonicalizationAgent removed - use CanonicalizationService instead
 from core.agents.research import ResearchAgent
 from core.agents.context_prioritization import ContextPrioritizationAgent, PrioritizationDecision
 from core.agents.spend_classification import ExpertClassifier, ClassificationResult
@@ -36,14 +35,18 @@ from core.utils.infrastructure.sanitize import sanitize_invoice_key
 
 
 class SpendClassificationPipeline:
-    """Pipeline that orchestrates all agents for end-to-end spend classification.
+    """Pipeline that orchestrates classification agents.
     
-    Simplified 5-step pipeline:
-    1. Canonicalization - Map client columns to canonical schema
-    2. Context Prioritization - Decide if research is needed
-    3. Supplier Research - Get supplier profile if needed
-    4. Expert Classification - Single-shot L1-L5 with validation
-    5. Store Results - Cache and return
+    DEPRECATED: This class is deprecated. Use ClassificationService instead.
+    
+    This pipeline now only handles classification (expects canonicalized input).
+    The workflow is now:
+    1. Context Prioritization - Decide if research is needed
+    2. Supplier Research - Get supplier profile if needed
+    3. Expert Classification - Single-shot L1-L5 with validation
+    4. Store Results - Cache and return
+    
+    Note: Canonicalization is now handled separately by CanonicalizationService.
     """
 
     def __init__(self, taxonomy_path: str, enable_tracing: bool = True):
@@ -58,7 +61,7 @@ class SpendClassificationPipeline:
             setup_mlflow_tracing(experiment_name="spend_classification_pipeline")
 
         self.taxonomy_path = taxonomy_path
-        self.canonicalization_agent = ColumnCanonicalizationAgent(enable_tracing=enable_tracing)
+        # NOTE: Canonicalization agent removed - use CanonicalizationService instead
         self.research_agent = ResearchAgent(enable_tracing=enable_tracing)
         self.context_prioritization_agent = ContextPrioritizationAgent(
             taxonomy_path=taxonomy_path, enable_tracing=enable_tracing
@@ -641,21 +644,26 @@ class SpendClassificationPipeline:
         self, df: pd.DataFrame, taxonomy_path: Optional[str] = None, return_intermediate: bool = False, max_workers: int = 1, run_id: Optional[str] = None, dataset_name: Optional[str] = None
     ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, Dict]]:
         """
-        Process transactions through the full pipeline
+        Process transactions through classification pipeline.
+        
+        NOTE: This method is DEPRECATED. Use ClassificationService instead.
+        This method now expects a canonicalized DataFrame (canonical column names).
+        For full workflow including canonicalization, use the new workflow services:
+        - CanonicalizationService
+        - VerificationService  
+        - ClassificationService
 
         Args:
-            df: DataFrame with raw transaction data (client-specific column names)
+            df: DataFrame with CANONICAL column names (not raw client-specific columns)
             taxonomy_path: Optional override for taxonomy path
             return_intermediate: If True, returns tuple with intermediate results
-            max_workers: Maximum number of parallel workers for classification (default: 1, context prioritization done before parallel processing)
+            max_workers: Maximum number of parallel workers for classification
             run_id: Optional run ID (UUID). If not provided, a new UUID will be generated
             dataset_name: Optional dataset name (e.g., "fox", "innova"). Used for tracking
 
         Returns:
-            DataFrame with original + canonical + classification columns
+            DataFrame with classification columns added
             If return_intermediate=True, returns (result_df, intermediate_dict) where intermediate_dict contains:
-            - mapping_result: Column canonicalization mapping result
-            - supplier_profiles: Dict mapping supplier_name to profile dict
             - run_id: The run_id used for this processing run
         """
         taxonomy = taxonomy_path or self.taxonomy_path
@@ -664,16 +672,9 @@ class SpendClassificationPipeline:
         if run_id is None:
             run_id = str(uuid.uuid4())
 
-        # Step 1: Canonicalization
-        client_schema = self.canonicalization_agent.extract_schema_from_dataframe(df, sample_rows=3)
-        mapping_result = self.canonicalization_agent.map_columns(client_schema)
-
-        if not mapping_result.validation_passed:
-            raise ValueError(
-                f"Cannot proceed with invalid column mappings: {mapping_result.validation_errors}"
-            )
-
-        canonical_df = self.canonicalization_agent.apply_mapping(df, mapping_result)
+        # NOTE: Canonicalization is now handled separately by CanonicalizationService
+        # This method expects df to already have canonical column names
+        canonical_df = df
 
         # Step 2: Group transactions into invoices (using configurable grouping columns)
         invoices = group_transactions_by_invoice(
@@ -857,13 +858,8 @@ class SpendClassificationPipeline:
         result_df.attrs['classification_errors'] = errors
 
         if return_intermediate:
-            # Convert LRU cache to dict for return (snapshot)
-            supplier_profiles_snapshot = {}
-            # Note: LRUCache doesn't have a copy method, so we iterate
-            # This is a snapshot at this point in time
+            # Return intermediate results (no mapping_result since canonicalization is separate)
             intermediate = {
-                'mapping_result': mapping_result,
-                'supplier_profiles': supplier_profiles_snapshot,  # Empty for now - cache is internal
                 'run_id': run_id,
             }
             return result_df, intermediate

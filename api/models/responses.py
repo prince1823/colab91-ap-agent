@@ -149,3 +149,68 @@ class TransactionDetailResponse(BaseModel):
 
     row_index: int
     data: Dict[str, Any]
+
+
+# ==================== Dataset CRUD Responses ====================
+
+class CreateDatasetResponse(BaseModel):
+    """Response model for dataset creation."""
+
+    dataset_id: str
+    foldername: str
+    row_count: int
+    message: str = "Dataset created successfully"
+
+
+class UpdateDatasetResponse(BaseModel):
+    """Response model for dataset update."""
+
+    dataset_id: str
+    foldername: str
+    row_count: Optional[int] = None
+    message: str = "Dataset updated successfully"
+
+
+class DatasetTaxonomyResponse(BaseModel):
+    """Response model for dataset taxonomy."""
+
+    dataset_id: str
+    foldername: str
+    taxonomy: Dict[str, Any]
+
+
+# ==================== Classification Workflow Responses ====================
+
+class CanonicalizationReviewResponse(BaseModel):
+    """Response model for canonicalization review."""
+
+    dataset_id: str
+    foldername: str
+    canonicalization_result: Dict[str, Any]
+    canonicalized_csv_path: str
+    current_canonical_columns: Optional[List[str]] = None
+
+
+class WorkflowStatusResponse(BaseModel):
+    """Response model for workflow status."""
+
+    dataset_id: str
+    foldername: str
+    status: str
+    canonicalized_csv_path: Optional[str] = None
+    classification_result_path: Optional[str] = None
+    run_id: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    message: Optional[str] = None
+
+
+class ClassificationStatusResponse(BaseModel):
+    """Response model for classification status."""
+
+    dataset_id: str
+    foldername: str
+    status: str
+    row_count: Optional[int] = None
+    message: str
