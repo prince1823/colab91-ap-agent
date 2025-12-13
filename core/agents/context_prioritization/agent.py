@@ -11,13 +11,13 @@ import yaml
 
 from core.config import get_config
 from core.llms.llm import get_llm_for_agent
-from core.utils.mlflow import setup_mlflow_tracing
+from core.utils.infrastructure.mlflow import setup_mlflow_tracing
 from core.agents.context_prioritization.signature import ContextPrioritizationSignature
 from core.agents.context_prioritization.model import PrioritizationDecision
-from core.utils.transaction_utils import is_valid_value
+from core.utils.data.transaction_utils import is_valid_value
 from core.agents.taxonomy_rag import TaxonomyRetriever
-from core.utils.invoice_config import InvoiceProcessingConfig, DEFAULT_CONFIG
-from core.utils.retry import retry_with_backoff
+from core.utils.invoice.invoice_config import InvoiceProcessingConfig, DEFAULT_CONFIG
+from core.utils.infrastructure.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 

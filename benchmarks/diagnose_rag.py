@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.agents.taxonomy_rag import TaxonomyRetriever
 from core.agents.column_canonicalization import ColumnCanonicalizationAgent
-from core.utils.transaction_utils import is_valid_value
+from core.utils.data.transaction_utils import is_valid_value
 
 
 def load_taxonomy(taxonomy_path: Path) -> Tuple[List[str], Dict[str, str]]:

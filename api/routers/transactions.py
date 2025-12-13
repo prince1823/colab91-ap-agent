@@ -9,9 +9,12 @@ from api.exceptions import DatasetNotFoundError, InvalidDatasetIdError, Transact
 from api.models.requests import UpdateTransactionRequest
 from api.models.responses import TransactionDetailResponse, TransactionsResponse
 from api.services.dataset_service import DatasetService
-from core.hitl.csv_service import get_transaction_by_row_index, query_classified_transactions
+from core.hitl.services.csv_service import CSVService
 
 router = APIRouter(prefix="/api/v1", tags=["transactions"])
+
+# Initialize CSV service instance
+_csv_service = CSVService()
 
 
 @router.get("/transactions", response_model=TransactionsResponse)
@@ -55,7 +58,7 @@ def get_transactions(
         if supplier_name:
             filters["supplier_name"] = supplier_name
 
-        result = query_classified_transactions(csv_path_or_uri, filters, page, limit)
+        result = _csv_service.query_transactions(csv_path_or_uri, filters, page, limit)
         return result
     except (DatasetNotFoundError, InvalidDatasetIdError) as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -85,7 +88,7 @@ def get_transaction(
     """
     try:
         csv_path_or_uri = dataset_service.get_output_csv_path(dataset_id, foldername)
-        transaction = get_transaction_by_row_index(csv_path_or_uri, row_index)
+        transaction = _csv_service.get_transaction_by_index(csv_path_or_uri, row_index)
         
         if not transaction:
             raise TransactionNotFoundError(f"Transaction at row {row_index} not found")
@@ -144,7 +147,7 @@ def update_transaction(
         
         # Get updated transaction
         csv_path_or_uri = dataset_service.get_output_csv_path(dataset_id, foldername)
-        transaction = get_transaction_by_row_index(csv_path_or_uri, row_index)
+        transaction = _csv_service.get_transaction_by_index(csv_path_or_uri, row_index)
         
         return TransactionDetailResponse(
             row_index=row_index,

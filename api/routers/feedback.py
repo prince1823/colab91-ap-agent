@@ -27,15 +27,12 @@ from api.models.responses import (
     SubmitFeedbackResponse,
 )
 from api.services.dataset_service import DatasetService
-from core.hitl.feedback_service import (
-    apply_bulk_corrections,
-    approve_feedback,
-    execute_action,
-    preview_affected_rows,
-    submit_feedback,
-)
+from core.hitl.service import FeedbackService
 
 router = APIRouter(prefix="/api/v1/feedback", tags=["feedback"])
+
+# Initialize feedback service instance
+_feedback_service = FeedbackService()
 
 
 @router.get("", response_model=FeedbackListPaginatedResponse)
@@ -61,21 +58,14 @@ def list_feedback(
     Returns:
         Paginated list of feedback items
     """
-    query = session.query(UserFeedback)
-    
-    if status:
-        query = query.filter(UserFeedback.status == status)
-    if dataset_id:
-        query = query.filter(UserFeedback.dataset_name == dataset_id)
-    if action_type:
-        query = query.filter(UserFeedback.action_type == action_type)
-    
-    # Get total count
-    total = query.count()
-    
-    # Apply pagination
-    offset = (page - 1) * limit
-    feedback_items = query.order_by(UserFeedback.created_at.desc()).offset(offset).limit(limit).all()
+    result = _feedback_service.list_feedback_items(
+        session=session,
+        status=status,
+        dataset_id=dataset_id,
+        action_type=action_type,
+        page=page,
+        limit=limit,
+    )
     
     items = [
         FeedbackListResponse(
@@ -88,15 +78,15 @@ def list_feedback(
             status=item.status,
             created_at=item.created_at,
         )
-        for item in feedback_items
+        for item in result['items']
     ]
     
     return FeedbackListPaginatedResponse(
         items=items,
-        total=total,
-        page=page,
-        pages=(total + limit - 1) // limit,  # Ceiling division
-        limit=limit,
+        total=result['total'],
+        page=result['page'],
+        pages=result['pages'],
+        limit=result['limit'],
     )
 
 
@@ -118,7 +108,7 @@ def get_feedback(
     Raises:
         HTTPException: If feedback not found
     """
-    feedback = session.query(UserFeedback).filter(UserFeedback.id == feedback_id).first()
+    feedback = _feedback_service.get_feedback_item(session, feedback_id)
     if not feedback:
         raise HTTPException(status_code=404, detail=f"Feedback {feedback_id} not found")
     
@@ -167,14 +157,15 @@ def create_feedback(
     try:
         csv_path = dataset_service.get_output_csv_path(request.dataset_id, request.foldername)
 
-        result = submit_feedback(
+        # Create a FeedbackService instance with the provided LM
+        feedback_service = FeedbackService(lm=lm)
+        result = feedback_service.submit_feedback(
             session=session,
             csv_path=csv_path,
             row_index=request.row_index,
             corrected_path=request.corrected_path,
             feedback_text=request.feedback_text,
             dataset_name=request.dataset_id,
-            lm=lm,
         )
         return result
     except (DatasetNotFoundError, InvalidDatasetIdError, TransactionNotFoundError) as e:
@@ -204,7 +195,7 @@ def approve_user_feedback(
         HTTPException: If feedback not found
     """
     try:
-        result = approve_feedback(
+        result = _feedback_service.approve_feedback(
             session=session,
             feedback_id=feedback_id,
             user_edited_text=request.edited_text,
@@ -235,7 +226,7 @@ def get_preview_affected_rows(
         HTTPException: If feedback not found
     """
     try:
-        result = preview_affected_rows(session=session, feedback_id=feedback_id)
+        result = _feedback_service.preview_affected_rows(session=session, feedback_id=feedback_id)
         return result
     except ValueError as e:
         if "not found" in str(e).lower():
@@ -265,11 +256,11 @@ def apply_feedback(
     """
     try:
         # First execute the action (update taxonomy/create rules)
-        execute_action(session=session, feedback_id=feedback_id)
+        _feedback_service.execute_action(session=session, feedback_id=feedback_id)
 
         # Then apply bulk corrections to CSV
         dataset_service = get_dataset_service()
-        result = apply_bulk_corrections(
+        result = _feedback_service.apply_bulk_corrections(
             session=session,
             feedback_id=feedback_id,
             row_indices=request.row_indices,
@@ -283,6 +274,8 @@ def apply_feedback(
         if "must be approved" in error_str or "status" in error_str:
             raise HTTPException(status_code=400, detail=str(e))
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/{feedback_id}")
@@ -303,18 +296,13 @@ def delete_feedback(
     Raises:
         HTTPException: If feedback not found
     """
-    feedback = session.query(UserFeedback).filter(UserFeedback.id == feedback_id).first()
-    if not feedback:
-        raise HTTPException(status_code=404, detail=f"Feedback {feedback_id} not found")
-    
-    # Only allow deletion of pending feedback (not approved/applied)
-    if feedback.status != "pending":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot delete feedback with status '{feedback.status}'. Only pending feedback can be deleted."
-        )
-    
-    session.delete(feedback)
-    session.commit()
-    
-    return {"message": f"Feedback {feedback_id} deleted successfully"}
+    try:
+        _feedback_service.delete_feedback_item(session=session, feedback_id=feedback_id)
+        return {"message": f"Feedback {feedback_id} deleted successfully"}
+    except ValueError as e:
+        error_str = str(e).lower()
+        if "not found" in error_str:
+            raise HTTPException(status_code=404, detail=str(e))
+        if "cannot delete" in error_str or "status" in error_str:
+            raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))

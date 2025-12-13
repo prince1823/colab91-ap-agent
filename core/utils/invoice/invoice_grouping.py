@@ -4,7 +4,7 @@ import logging
 from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
-from core.utils.invoice_config import DEFAULT_CONFIG
+from core.utils.invoice.invoice_config import DEFAULT_CONFIG
 
 logger = logging.getLogger(__name__)
 

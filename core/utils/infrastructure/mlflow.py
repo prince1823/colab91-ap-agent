@@ -26,7 +26,7 @@ def setup_mlflow_tracing(experiment_name: Optional[str] = None, run_name: Option
         run_name: Name of the MLflow run. If None, MLflow will auto-generate traces.
     
     Example:
-        >>> from core.utils.mlflow import setup_mlflow_tracing
+        >>> from core.utils.infrastructure.mlflow import setup_mlflow_tracing
         >>> setup_mlflow_tracing(experiment_name="column_canonicalization")
     """
     global _autolog_initialized
@@ -72,7 +72,7 @@ def mlflow_run(experiment_name: Optional[str] = None, run_name: Optional[str] = 
         run_name: Name of the MLflow run. If None, uses config default or auto-generated.
     
     Example:
-        >>> from core.utils.mlflow import mlflow_run
+        >>> from core.utils.infrastructure.mlflow import mlflow_run
         >>> with mlflow_run(experiment_name="column_canonicalization", run_name="test_run"):
         ...     agent.map_columns(client_schema)
     """

@@ -26,13 +26,13 @@ from core.agents.context_prioritization import ContextPrioritizationAgent, Prior
 from core.agents.spend_classification import ExpertClassifier, ClassificationResult
 from core.database import ClassificationDBManager
 from core.config import get_config
-from core.utils.mlflow import setup_mlflow_tracing
-from core.utils.invoice_grouping import group_transactions_by_invoice
-from core.utils.lru_cache import LRUCache
-from core.utils.invoice_config import InvoiceProcessingConfig, DEFAULT_CONFIG
-from core.utils.error_models import ClassificationError
-from core.utils.path_parsing import parse_classification_path
-from core.utils.sanitize import sanitize_invoice_key
+from core.utils.infrastructure.mlflow import setup_mlflow_tracing
+from core.utils.invoice.invoice_grouping import group_transactions_by_invoice
+from core.utils.cache.lru_cache import LRUCache
+from core.utils.invoice.invoice_config import InvoiceProcessingConfig, DEFAULT_CONFIG
+from core.utils.error.error_models import ClassificationError
+from core.utils.data.path_parsing import parse_classification_path
+from core.utils.infrastructure.sanitize import sanitize_invoice_key
 
 
 class SpendClassificationPipeline:
@@ -880,7 +880,7 @@ class SpendClassificationPipeline:
         Returns:
             True if transaction data is sparse, False otherwise
         """
-        from core.utils.transaction_utils import is_valid_value
+        from core.utils.data.transaction_utils import is_valid_value
         
         line_desc = row_dict.get('line_description')
         gl_desc = row_dict.get('gl_description')

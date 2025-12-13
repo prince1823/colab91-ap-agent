@@ -9,7 +9,7 @@ from openai import OpenAI
 
 from core.config import get_config
 from core.llms.llm import get_llm_for_agent
-from core.utils.mlflow import setup_mlflow_tracing
+from core.utils.infrastructure.mlflow import setup_mlflow_tracing
 from core.agents.research.signature import ResearchSignature
 from core.agents.research.model import SupplierProfile
 

@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 from core.config import get_config
 from core.llms.llm import get_llm_for_agent
-from core.utils.mlflow import setup_mlflow_tracing
+from core.utils.infrastructure.mlflow import setup_mlflow_tracing
 from core.agents.column_canonicalization.signature import ColumnCanonicalizationSignature
 from core.agents.column_canonicalization.canonical_columns import (
     get_canonical_columns_for_prompt,

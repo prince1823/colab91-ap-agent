@@ -22,7 +22,7 @@ except ImportError:
     SEMANTIC_AVAILABLE = False
     SentenceTransformer = None
 
-from core.utils.transaction_utils import is_valid_value
+from core.utils.data.transaction_utils import is_valid_value
 
 logger = logging.getLogger(__name__)
 

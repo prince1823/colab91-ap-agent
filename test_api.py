@@ -9,10 +9,10 @@ try:
     from api.main import app
     print("✓ FastAPI app imported successfully")
 
-    from core.hitl.csv_service import list_available_datasets
+    from core.hitl.services.csv_service import CSVService
     print("✓ CSV service imported successfully")
 
-    from core.hitl.feedback_service import submit_feedback
+    from core.hitl.service import FeedbackService
     print("✓ Feedback service imported successfully")
 
     from core.agents.feedback_action import FeedbackAction
@@ -73,7 +73,8 @@ except Exception as e:
 # Test CSV service
 try:
     print("\nTesting CSV service...")
-    datasets = list_available_datasets()
+    csv_service = CSVService()
+    datasets = csv_service.list_available_datasets()
     print(f"✓ Found {len(datasets)} datasets")
 
     if datasets:
