@@ -17,6 +17,15 @@ from api.services.dataset_service import DatasetService
 from core.classification.services.verification_service import VerificationService
 from core.classification.services.classification_service import ClassificationService
 from core.classification.workflow.workflow_manager import WorkflowManager
+from core.classification.exceptions import (
+    WorkflowError,
+    CanonicalizationError,
+    VerificationError,
+    ClassificationError,
+    InvalidStateTransitionError,
+    InvalidColumnError,
+    CSVIntegrityError
+)
 from core.config import get_config
 
 router = APIRouter(prefix="/api/v1", tags=["classification"])
@@ -27,10 +36,11 @@ def get_workflow_manager(
     dataset_service: DatasetService = Depends(get_dataset_service),
 ) -> WorkflowManager:
     """Get workflow manager instance."""
-    # Get taxonomy path - in production, this should come from dataset metadata
+    # Note: Taxonomy path will be determined per-dataset when needed
+    # For workflow manager, we use a placeholder that will be overridden
+    # The actual taxonomy is loaded from dataset in each service
     config = get_config()
-    # For now, use a default - this should be improved to get from dataset
-    taxonomy_path = "taxonomies/default.yaml"
+    taxonomy_path = "taxonomies/default.yaml"  # Placeholder, actual path loaded per-dataset
     return WorkflowManager(session, dataset_service, taxonomy_path)
 
 
@@ -59,7 +69,7 @@ def start_canonicalization(
         return result
     except (DatasetNotFoundError, InvalidDatasetIdError) as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except ValueError as e:
+    except (CanonicalizationError, InvalidStateTransitionError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Canonicalization failed: {str(e)}")
@@ -89,7 +99,7 @@ def get_canonicalization_review(
         verification_service = VerificationService(session)
         review_data = verification_service.get_canonicalization_for_review(dataset_id, foldername)
         return CanonicalizationReviewResponse(**review_data)
-    except ValueError as e:
+    except VerificationError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get canonicalization review: {str(e)}")
@@ -139,7 +149,7 @@ def approve_canonicalization(
             auto_approve=request.auto_approve
         )
         return {"status": "verified", "message": "Canonicalization approved"}
-    except ValueError as e:
+    except (VerificationError, InvalidColumnError, InvalidStateTransitionError, CSVIntegrityError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
@@ -170,10 +180,20 @@ def start_classification(
         HTTPException: If dataset not found or not verified
     """
     try:
-        config = get_config()
-        # Get taxonomy path from dataset - for now use default
-        # TODO: Get taxonomy path from dataset metadata
-        taxonomy_path = "taxonomies/default.yaml"
+        # Get taxonomy from dataset service
+        try:
+            taxonomy_data = dataset_service.read_yaml(dataset_id, foldername)
+            # Save taxonomy to temp file for classification service
+            import tempfile
+            import yaml
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+                yaml.dump(taxonomy_data, f)
+                taxonomy_path = f.name
+        except Exception as e:
+            # Fallback to default if dataset doesn't have taxonomy
+            logger.warning(f"Could not load taxonomy from dataset {dataset_id}: {e}. Using default.")
+            config = get_config()
+            taxonomy_path = "taxonomies/default.yaml"
         
         classification_service = ClassificationService(
             session, dataset_service, taxonomy_path
@@ -189,7 +209,7 @@ def start_classification(
             "row_count": len(result_df),
             "message": "Classification completed successfully"
         }
-    except ValueError as e:
+    except (ClassificationError, InvalidStateTransitionError, CSVIntegrityError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Classification failed: {str(e)}")

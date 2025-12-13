@@ -5,11 +5,22 @@ from typing import Dict, Optional
 
 from sqlalchemy.orm import Session
 
+import tempfile
+import yaml
+from typing import Dict
+
+from sqlalchemy.orm import Session
+
 from core.classification.services.canonicalization_service import CanonicalizationService
 from core.classification.services.verification_service import VerificationService
 from core.classification.services.classification_service import ClassificationService
 from core.database.models import DatasetProcessingState
 from api.services.dataset_service import DatasetService
+from core.classification.exceptions import WorkflowError
+from core.classification.constants import (
+    WorkflowStatus,
+    DEFAULT_MAX_WORKERS
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +72,7 @@ class WorkflowManager:
         return {
             "dataset_id": dataset_id,
             "foldername": foldername,
-            "status": "canonicalized",
+            "status": WorkflowStatus.CANONICALIZED,
             "mapping_result": {
                 "mappings": mapping_result.mappings,
                 "unmapped_columns": mapping_result.unmapped_columns,
@@ -91,7 +102,7 @@ class WorkflowManager:
             return {
                 "dataset_id": dataset_id,
                 "foldername": foldername,
-                "status": "pending",
+                "status": WorkflowStatus.PENDING,
                 "message": "No processing state found. Start with canonicalization."
             }
 
@@ -121,18 +132,19 @@ class WorkflowManager:
             Dictionary with workflow status
         """
         state = self.get_workflow_status(dataset_id, foldername)
+        current_status = state["status"]
 
-        if state["status"] == "pending":
+        if current_status == WorkflowStatus.PENDING:
             # Start canonicalization
             return self.start_canonicalization(dataset_id, foldername)
-        elif state["status"] == "canonicalized" or state["status"] == "awaiting_verification":
+        elif current_status in (WorkflowStatus.CANONICALIZED, WorkflowStatus.AWAITING_VERIFICATION):
             # Auto-approve for automated workflows (benchmarks)
             self.verification_service.approve_canonicalization(
                 dataset_id, foldername, auto_approve=True
             )
             # Continue to classification
             return self._start_classification(dataset_id, foldername)
-        elif state["status"] == "verified":
+        elif current_status == WorkflowStatus.VERIFIED:
             # Start classification
             return self._start_classification(dataset_id, foldername)
         else:
@@ -147,14 +159,43 @@ class WorkflowManager:
         self, dataset_id: str, foldername: str = "default"
     ) -> Dict:
         """Start classification stage."""
-        result_df = self.classification_service.classify_dataset(
-            dataset_id, foldername, max_workers=4
+        taxonomy_path = self._get_taxonomy_path(dataset_id, foldername)
+        
+        # Create classification service with dataset-specific taxonomy
+        classification_service = ClassificationService(
+            self.session, self.dataset_service, taxonomy_path
+        )
+        
+        result_df = classification_service.classify_dataset(
+            dataset_id, foldername, max_workers=DEFAULT_MAX_WORKERS
         )
 
         return {
             "dataset_id": dataset_id,
             "foldername": foldername,
-            "status": "completed",
+            "status": WorkflowStatus.COMPLETED,
             "row_count": len(result_df),
         }
+
+    def _get_taxonomy_path(self, dataset_id: str, foldername: str) -> str:
+        """
+        Get taxonomy path from dataset or use default.
+        
+        Args:
+            dataset_id: Dataset identifier
+            foldername: Folder name
+            
+        Returns:
+            Path to taxonomy YAML file
+        """
+        try:
+            taxonomy_data = self.dataset_service.read_yaml(dataset_id, foldername)
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+                yaml.dump(taxonomy_data, f)
+                return f.name
+        except Exception as e:
+            logger.warning(
+                f"Could not load taxonomy from dataset {dataset_id}: {e}. Using default."
+            )
+            return self.taxonomy_path
 

@@ -18,10 +18,23 @@ from core.utils.infrastructure.mlflow import setup_mlflow_tracing
 from core.utils.invoice.invoice_grouping import group_transactions_by_invoice
 from core.utils.cache.lru_cache import LRUCache
 from core.utils.invoice.invoice_config import DEFAULT_CONFIG
-from core.utils.error.error_models import ClassificationError
+from core.utils.error.error_models import ClassificationError as TransactionClassificationError
 from core.utils.data.path_parsing import parse_classification_path
 from core.utils.infrastructure.sanitize import sanitize_invoice_key
 from api.services.dataset_service import DatasetService
+from core.classification.exceptions import (
+    ClassificationError,
+    InvalidStateTransitionError,
+    CSVIntegrityError
+)
+from core.classification.constants import (
+    WorkflowStatus,
+    DEFAULT_MAX_WORKERS,
+    DEFAULT_SUPPLIER_RULES_CACHE_SIZE,
+    CLASSIFIED_CSV_FILENAME
+)
+from core.classification.validators import validate_state_transition, validate_canonicalized_csv
+from sqlalchemy.exc import SQLAlchemyError
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +76,7 @@ class ClassificationService:
         app_config = get_config()
         invoice_config = DEFAULT_CONFIG
         self._supplier_cache = LRUCache(max_size=invoice_config.supplier_cache_max_size)
-        self._supplier_rules_cache = LRUCache(max_size=500)
+        self._supplier_rules_cache = LRUCache(max_size=DEFAULT_SUPPLIER_RULES_CACHE_SIZE)
 
         # Initialize database manager if caching is enabled
         self.db_manager: Optional[ClassificationDBManager] = None
@@ -79,7 +92,7 @@ class ClassificationService:
         self,
         dataset_id: str,
         foldername: str = "default",
-        max_workers: int = 4,
+        max_workers: int = DEFAULT_MAX_WORKERS,
         taxonomy_path: Optional[str] = None
     ) -> pd.DataFrame:
         """
@@ -97,26 +110,46 @@ class ClassificationService:
         Raises:
             ValueError: If dataset is not verified
         """
-        state = self._get_state(dataset_id, foldername)
+        state = self._get_state(dataset_id, foldername, lock=True)
 
-        if state.status != "verified":
-            raise ValueError(
+        if state.status != WorkflowStatus.VERIFIED:
+            raise ClassificationError(
                 f"Dataset must be verified first. Current status: {state.status}"
             )
 
-        state.status = "classifying"
-        run_id = str(uuid.uuid4())
-        state.run_id = run_id
-        self.session.commit()
+        # Validate state transition
+        try:
+            validate_state_transition(state.status, WorkflowStatus.CLASSIFYING)
+        except InvalidStateTransitionError as e:
+            raise ClassificationError(str(e)) from e
+
+        try:
+            state.status = WorkflowStatus.CLASSIFYING
+            run_id = str(uuid.uuid4())
+            state.run_id = run_id
+            self.session.commit()
+        except SQLAlchemyError as e:
+            self.session.rollback()
+            raise ClassificationError(f"Failed to update classification state: {e}") from e
 
         try:
             taxonomy = taxonomy_path or self.taxonomy_path
 
             # 1. Load canonicalized CSV
             if not state.canonicalized_csv_path:
-                raise ValueError("Canonicalized CSV path not found in state")
+                raise ClassificationError("Canonicalized CSV path not found in state")
 
-            canonical_df = pd.read_csv(state.canonicalized_csv_path)
+            csv_path = Path(state.canonicalized_csv_path)
+            if not csv_path.exists():
+                raise ClassificationError(f"Canonicalized CSV not found: {csv_path}")
+
+            try:
+                canonical_df = pd.read_csv(state.canonicalized_csv_path)
+            except Exception as e:
+                raise CSVIntegrityError(f"Failed to read canonicalized CSV: {e}") from e
+            
+            # Validate CSV integrity before processing
+            validate_canonicalized_csv(canonical_df)
 
             # 2. Group transactions into invoices
             invoices = group_transactions_by_invoice(
@@ -177,7 +210,7 @@ class ClassificationService:
                             error_msg = f"Invoice {invoice_key} processing failed: {e}"
                             logger.error(error_msg, exc_info=True)
                             for pos, df_idx, row_dict in invoice_rows:
-                                error = ClassificationError(
+                                error = TransactionClassificationError(
                                     row_index=df_idx,
                                     supplier_name=row_dict.get('supplier_name'),
                                     error=error_msg,
@@ -283,19 +316,28 @@ class ClassificationService:
             result_path = self._save_classified_csv(dataset_id, foldername, result_df)
 
             # 6. Update state
-            state.status = "completed"
-            state.classification_result_path = result_path
-            self.session.commit()
+            try:
+                validate_state_transition(state.status, WorkflowStatus.COMPLETED)
+                state.status = WorkflowStatus.COMPLETED
+                state.classification_result_path = result_path
+                self.session.commit()
+            except SQLAlchemyError as e:
+                self.session.rollback()
+                raise ClassificationServiceError(f"Failed to save classification state: {e}") from e
 
             logger.info(f"Classification completed for {dataset_id}/{foldername}")
             return result_df
 
         except Exception as e:
-            state.status = "failed"
-            state.error_message = str(e)
-            self.session.commit()
+            try:
+                state.status = "failed"
+                state.error_message = str(e)
+                self.session.commit()
+            except SQLAlchemyError as db_error:
+                self.session.rollback()
+                logger.error(f"Failed to update error state: {db_error}", exc_info=True)
             logger.error(f"Classification failed for {dataset_id}/{foldername}: {e}", exc_info=True)
-            raise
+            raise ClassificationError(f"Classification failed: {e}") from e
 
     def _classify_invoice(
         self,
@@ -559,15 +601,30 @@ class ClassificationService:
 
         return results, errors, prioritization_decision
 
-    def _get_state(self, dataset_id: str, foldername: str) -> DatasetProcessingState:
-        """Get processing state."""
-        state = self.session.query(DatasetProcessingState).filter(
+    def _get_state(self, dataset_id: str, foldername: str, lock: bool = False) -> DatasetProcessingState:
+        """
+        Get processing state with optional locking.
+        
+        Args:
+            dataset_id: Dataset identifier
+            foldername: Folder name
+            lock: If True, lock the row to prevent concurrent modifications
+            
+        Returns:
+            DatasetProcessingState
+        """
+        query = self.session.query(DatasetProcessingState).filter(
             DatasetProcessingState.dataset_id == dataset_id,
             DatasetProcessingState.foldername == foldername
-        ).first()
+        )
+        
+        if lock:
+            query = query.with_for_update(nowait=True)
+        
+        state = query.first()
 
         if not state:
-            raise ValueError(
+            raise ClassificationError(
                 f"No processing state found for {dataset_id}/{foldername}"
             )
 
@@ -582,8 +639,8 @@ class ClassificationService:
         dataset_path = datasets_dir / foldername / dataset_id
         dataset_path.mkdir(parents=True, exist_ok=True)
 
-        # Save as classified.csv (or output.csv for backward compatibility with benchmarks)
-        classified_path = dataset_path / "classified.csv"
+        # Save as classified.csv
+        classified_path = dataset_path / CLASSIFIED_CSV_FILENAME
         df.to_csv(classified_path, index=False)
 
         return str(classified_path)

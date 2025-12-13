@@ -221,3 +221,31 @@ class VerifyCanonicalizationRequest(BaseModel):
     )
     notes: Optional[str] = Field(None, description="Optional verification notes")
     auto_approve: bool = Field(False, description="Auto-approve without human review (for benchmarks)")
+
+    @field_validator('columns_to_add')
+    @classmethod
+    def validate_columns_to_add(cls, v: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
+        """Validate columns to add structure."""
+        if v:
+            for col in v:
+                if 'canonical_name' not in col:
+                    raise ValueError("Each column to add must have 'canonical_name'")
+                canonical_name = col['canonical_name']
+                if not isinstance(canonical_name, str) or not canonical_name.strip():
+                    raise ValueError(f"canonical_name must be a non-empty string, got: {canonical_name}")
+                # Validate column name format (basic check)
+                if '..' in canonical_name or '/' in canonical_name or '\\' in canonical_name:
+                    raise ValueError(f"canonical_name contains invalid characters: {canonical_name}")
+        return v
+
+    @field_validator('columns_to_remove')
+    @classmethod
+    def validate_columns_to_remove(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        """Validate columns to remove."""
+        if v:
+            for col_name in v:
+                if not isinstance(col_name, str) or not col_name.strip():
+                    raise ValueError(f"Column name must be a non-empty string, got: {col_name}")
+                if '..' in col_name or '/' in col_name or '\\' in col_name:
+                    raise ValueError(f"Column name contains invalid characters: {col_name}")
+        return v
