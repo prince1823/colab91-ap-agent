@@ -108,10 +108,16 @@ class ContextPrioritizationAgent:
         if is_valid_value(transaction_data.get('gl_description')):
             description_fields.append(('GL Description', transaction_data['gl_description']))
         
+        if is_valid_value(transaction_data.get('memo')):
+            description_fields.append(('Memo', transaction_data['memo']))
+        
+        if is_valid_value(transaction_data.get('line_memo')):
+            description_fields.append(('Line Memo', transaction_data['line_memo']))
+        
         # Other fields
         excluded_fields = {'supplier_name', 'L1', 'L2', 'L3', 'L4', 'L5', 'classification_path', 
                           'pipeline_output', 'expected_output', 'error', 'reasoning',
-                          'line_description', 'gl_description', 'department', 'gl_code', 
+                          'line_description', 'gl_description', 'memo', 'line_memo', 'department', 'gl_code', 
                           'invoice_number', 'po_number', 'invoice_date', 'amount', 'cost_center',
                           'currency', 'supplier_address'}
         for key, value in sorted(transaction_data.items()):

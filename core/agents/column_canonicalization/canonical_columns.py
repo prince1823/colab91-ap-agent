@@ -58,6 +58,22 @@ CANONICAL_COLUMNS = [
         common_aliases=["Description", "Line Description", "Item Description", "Details", "Transaction Description", "Line Item Description"],
         display_order=3,
     ),
+    CanonicalColumn(
+        canonical_name="memo",
+        data_type="string",
+        relevance_for_spend_analysis="Medium",
+        description="Memo/notes field - MEDIUM relevance for additional context about the transaction (e.g., operational journal entries, invoice details, transaction notes)",
+        common_aliases=["Memo", "Notes", "Transaction Memo", "Invoice Memo", "Journal Memo", "Memo Field"],
+        display_order=3,
+    ),
+    CanonicalColumn(
+        canonical_name="line_memo",
+        data_type="string",
+        relevance_for_spend_analysis="Medium",
+        description="Line-level memo/notes - MEDIUM relevance for line-item specific context and additional details about individual line items",
+        common_aliases=["Line Memo", "Line Notes", "Item Memo", "Line Item Memo", "Line Item Notes"],
+        display_order=3,
+    ),
     
     # HIGH relevance for classification
     CanonicalColumn(
