@@ -368,6 +368,7 @@ Each taxonomy YAML file contains:
 - `max_taxonomy_depth` - Maximum depth of taxonomy levels
 - `available_levels` - List of available levels (e.g., ["L1", "L2", "L3"])
 - `taxonomy` - List of pipe-separated taxonomy paths (e.g., "L1|L2|L3|...")
+- `taxonomy_descriptions` - (Optional) Dictionary mapping taxonomy paths to detailed descriptions for improved RAG semantic search
 - `override_rules` - List of business rules for specific classification overrides
 - `company_context` - (Optional) Additional company context to improve classification
 
@@ -432,6 +433,51 @@ taxonomy:
 - Works even when web search APIs are unavailable
 
 **Note**: If `company_context` is not provided in the taxonomy file, the system will fall back to using the company name extracted from the taxonomy filename.
+
+#### Adding Taxonomy Descriptions
+
+You can add detailed descriptions for each taxonomy path to improve RAG (Retrieval-Augmented Generation) semantic search accuracy. Descriptions are used to enhance embeddings for better matching of transactions to taxonomy categories.
+
+**Format**:
+```yaml
+client_name: Innova Care Health
+project_id: Innova_Care_Health_Jun_23
+max_taxonomy_depth: 4
+available_levels:
+- L1
+- L2
+- L3
+- L4
+taxonomy:
+- clinical|clinical equipment|diagnostic imaging equipment|diagnostic imaging equipment
+- non clinical|facilities|utilities|energy - electricity, heating oil & natural gas
+...
+taxonomy_descriptions:
+  clinical|clinical equipment|diagnostic imaging equipment|diagnostic imaging equipment: "Payments made to diagnostic imaging equipment suppliers including X-ray machines, ultrasound equipment, CT scanners, MRI machines, digital radiography systems, mammography equipment, and related imaging technology. Suppliers: Medical imaging equipment manufacturers (GE Healthcare, Siemens, Philips), imaging equipment vendors, specialized medical device companies."
+  non clinical|facilities|utilities|energy - electricity, heating oil & natural gas: "Payments made for electricity, natural gas, heating oil, and other energy sources used to power and heat clinic and office facilities. Suppliers: Utility companies (local electric and gas providers), energy suppliers, utility management service providers."
+...
+```
+
+**Benefits of Adding Descriptions**:
+- Improves semantic search accuracy by providing rich context for each category
+- Helps RAG system match transactions even when exact keywords don't match
+- Includes examples, use cases, and supplier information for better understanding
+- Descriptions are automatically included in LLM prompts when available
+
+**Adding Descriptions from CSV**:
+
+Use the utility script to merge descriptions from a CSV file into your YAML taxonomy:
+
+```bash
+python -m core.utils.add_taxonomy_descriptions \
+    /path/to/taxonomy_descriptions.csv \
+    taxonomies/Innova_Care_Health_Jun_23.yaml \
+    --level-columns L1 L2 L3 L4
+```
+
+The CSV file should have columns: `L1`, `L2`, `L3`, `L4`, `Description` (or custom level column names).
+
+**Note**: If `taxonomy_descriptions` is not provided, the system will work with path-only embeddings (backward compatible).
 
 ## Project Structure
 

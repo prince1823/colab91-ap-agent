@@ -19,6 +19,9 @@ sqlalchemy = "^2.0.0"
 sentence-transformers = "^2.3.0"
 torch = "^2.1.0"
 faiss-cpu = "^1.7.4"
+duckdb = "^1.0.0"
+fastapi = "^0.115.0"
+uvicorn = "^0.32.0"
 
 
 [build-system]

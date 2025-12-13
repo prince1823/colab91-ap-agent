@@ -81,7 +81,8 @@ def process_single_dataset(dataset_dir: Path):
         result_df, intermediate = pipeline.process_transactions(
             input_df,
             taxonomy_path=taxonomy_path,
-            return_intermediate=True
+            return_intermediate=True,
+            max_workers=4  # Enable parallel processing for better performance
         )
         elapsed_time = time.time() - start_time
         print(f"Processing time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
