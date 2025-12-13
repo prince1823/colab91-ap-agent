@@ -136,6 +136,8 @@ def list_available_datasets() -> List[Dict]:
     """
     List available datasets by scanning benchmarks directory.
 
+    DEPRECATED: Use DatasetService.list_datasets() instead.
+
     Returns:
         List of dataset info dicts with csv_path, dataset_name, foldername, row_count
     """
@@ -177,7 +179,7 @@ def find_rows_by_supplier(csv_path: str, supplier_name: str) -> List[Dict]:
     Find all rows for a specific supplier.
 
     Args:
-        csv_path: Path to the output CSV file
+        csv_path: Path to the output CSV file (can be local path or S3 URI)
         supplier_name: Supplier name to search for
 
     Returns:
@@ -185,10 +187,14 @@ def find_rows_by_supplier(csv_path: str, supplier_name: str) -> List[Dict]:
     """
     con = duckdb.connect()
 
-    query = """
+    # Get column mapping to use actual column name
+    column_mapping = _get_column_mapping(csv_path)
+    actual_col = column_mapping.get('supplier_name', 'Supplier')
+
+    query = f"""
         SELECT *, row_number() OVER () - 1 as row_idx
         FROM read_csv_auto(?)
-        WHERE supplier_name = ?
+        WHERE LOWER("{actual_col}") = LOWER(?)
     """
     result_df = con.execute(query, [csv_path, supplier_name]).fetchdf()
 
@@ -229,14 +235,26 @@ def update_csv_rows(csv_path: str, row_indices: List[int], updates: Dict) -> int
     """
     Update specific rows in the CSV file.
 
+    NOTE: This function works with local file paths. For S3 URIs, use DatasetService.update_transactions() instead.
+
     Args:
-        csv_path: Path to the output CSV file
+        csv_path: Path to the output CSV file (local path only, not S3 URI)
         row_indices: List of row indices to update (0-based)
         updates: Dictionary of column: value pairs to update
 
     Returns:
         Number of rows updated
+
+    Raises:
+        ValueError: If csv_path is an S3 URI (use DatasetService instead)
     """
+    # Check if this is an S3 URI
+    if csv_path.startswith("s3://"):
+        raise ValueError(
+            "update_csv_rows does not support S3 URIs. "
+            "Use DatasetService.update_transactions() with dataset_id and foldername instead."
+        )
+
     # Read CSV with pandas
     df = pd.read_csv(csv_path)
 

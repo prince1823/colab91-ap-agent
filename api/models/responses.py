@@ -8,8 +8,7 @@ from pydantic import BaseModel, Field
 class DatasetInfo(BaseModel):
     """Dataset information."""
 
-    csv_path: str
-    dataset_name: str
+    dataset_id: str
     foldername: str
     row_count: int
 

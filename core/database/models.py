@@ -63,9 +63,10 @@ class UserFeedback(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
 
     # Transaction reference
-    csv_file_path = Column(String(500), nullable=False)  # e.g., "benchmarks/default/innova/output.csv"
+    csv_file_path = Column(String(500), nullable=False)  # e.g., "benchmarks/default/innova/output.csv" or S3 URI
     row_index = Column(Integer, nullable=False)
-    dataset_name = Column(String(255), nullable=False)
+    dataset_name = Column(String(255), nullable=False)  # Dataset ID (e.g., "innova")
+    foldername = Column(String(255), nullable=True)  # Folder name (e.g., "default") - added for storage abstraction
 
     # User input
     original_classification = Column(String(500), nullable=False)

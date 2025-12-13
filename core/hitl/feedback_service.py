@@ -81,11 +81,31 @@ def submit_feedback(
     # 4. Format proposal text
     proposal_text = format_action_proposal(action_type, action_details, dataset_name)
 
-    # 5. Insert into user_feedback table
+    # 5. Extract foldername from csv_path if possible, otherwise default to "default"
+    # csv_path format: "benchmarks/{foldername}/{dataset_name}/output.csv" or S3 URI
+    foldername = "default"
+    if "/" in csv_path:
+        parts = csv_path.split("/")
+        # Try to extract foldername: look for pattern benchmarks/{foldername}/{dataset_name}/output.csv
+        if "benchmarks" in parts:
+            idx = parts.index("benchmarks")
+            if idx + 1 < len(parts):
+                foldername = parts[idx + 1]
+        # For S3 URIs: s3://bucket/benchmarks/{foldername}/{dataset_name}/output.csv
+        elif csv_path.startswith("s3://"):
+            # Extract from S3 URI
+            uri_parts = csv_path.replace("s3://", "").split("/")
+            if "benchmarks" in uri_parts:
+                idx = uri_parts.index("benchmarks")
+                if idx + 1 < len(uri_parts):
+                    foldername = uri_parts[idx + 1]
+
+    # 6. Insert into user_feedback table
     feedback = UserFeedback(
         csv_file_path=csv_path,
         row_index=row_index,
         dataset_name=dataset_name,
+        foldername=foldername,
         original_classification=original_path,
         corrected_classification=corrected_path,
         feedback_text=feedback_text,
@@ -310,7 +330,8 @@ def preview_affected_rows(session: Session, feedback_id: int) -> Dict:
 def apply_bulk_corrections(
     session: Session,
     feedback_id: int,
-    row_indices: List[int]
+    row_indices: List[int],
+    dataset_service=None
 ) -> Dict:
     """
     Apply bulk corrections to CSV rows.
@@ -319,6 +340,7 @@ def apply_bulk_corrections(
         session: SQLAlchemy session
         feedback_id: Feedback ID
         row_indices: List of row indices to update
+        dataset_service: Optional DatasetService for storage abstraction (if None, uses csv_path directly)
 
     Returns:
         Dictionary with updated_count
@@ -329,6 +351,8 @@ def apply_bulk_corrections(
 
     csv_path = feedback.csv_file_path
     corrected_path = feedback.corrected_classification
+    dataset_id = feedback.dataset_name
+    foldername = feedback.foldername or "default"
 
     # Parse corrected classification into components
     parts = corrected_path.split('|')
@@ -340,7 +364,13 @@ def apply_bulk_corrections(
         'override_rule_applied': f'feedback_{feedback_id}'
     }
 
-    # Update CSV rows
-    updated_count = update_csv_rows(csv_path, row_indices, updates)
+    # Use storage abstraction if available and csv_path is S3 URI
+    if dataset_service and csv_path.startswith("s3://"):
+        # Use DatasetService for S3
+        update_list = [{"row_index": idx, "fields": updates} for idx in row_indices]
+        updated_count = dataset_service.update_transactions(dataset_id, update_list, foldername)
+    else:
+        # Use direct file update for local paths
+        updated_count = update_csv_rows(csv_path, row_indices, updates)
 
     return {'updated_count': updated_count}

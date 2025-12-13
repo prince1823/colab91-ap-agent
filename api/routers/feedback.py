@@ -4,62 +4,40 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 import dspy
+from api.dependencies import get_db_session, get_dataset_service, get_lm
+from api.exceptions import (
+    DatasetNotFoundError,
+    FeedbackNotFoundError,
+    InvalidDatasetIdError,
+    InvalidFeedbackStateError,
+    TransactionNotFoundError,
+)
 from api.models.requests import ApplyBulkRequest, ApproveFeedbackRequest, SubmitFeedbackRequest
 from api.models.responses import (
     ApplyBulkResponse,
     ApproveFeedbackResponse,
     ExecuteActionResponse,
     PreviewAffectedRowsResponse,
-    SubmitFeedbackResponse
+    SubmitFeedbackResponse,
 )
+from api.services.dataset_service import DatasetService
 from core.hitl.feedback_service import (
     apply_bulk_corrections,
     approve_feedback,
     execute_action,
     preview_affected_rows,
-    submit_feedback
+    submit_feedback,
 )
 
 router = APIRouter(prefix="/api/v1/feedback", tags=["feedback"])
-
-
-# Dependency to get database session
-def get_db_session():
-    """Get database session. This should be implemented based on your DB setup."""
-    from core.database.schema import get_session_factory, init_database
-    from core.config import get_config
-
-    config = get_config()
-    engine = init_database(config.database_path)
-    Session = get_session_factory(engine)
-    session = Session()
-    try:
-        yield session
-    finally:
-        session.close()
-
-
-# Dependency to get DSPy language model
-def get_lm():
-    """Get configured DSPy language model."""
-    from core.config import get_config
-
-    config = get_config()
-
-    # Configure DSPy LM based on settings
-    if config.spend_classification_llm == "anthropic":
-        lm = dspy.Claude(model="claude-sonnet-4-20250514", api_key=config.anthropic.api_key)
-    else:
-        lm = dspy.OpenAI(model="gpt-4", api_key=config.openai.api_key)
-
-    return lm
 
 
 @router.post("", response_model=SubmitFeedbackResponse)
 def create_feedback(
     request: SubmitFeedbackRequest,
     session: Session = Depends(get_db_session),
-    lm: dspy.LM = Depends(get_lm)
+    lm: dspy.LM = Depends(get_lm),
+    dataset_service: DatasetService = Depends(get_dataset_service),
 ):
     """
     Submit user feedback and get LLM-generated action proposal.
@@ -68,22 +46,30 @@ def create_feedback(
         request: Feedback submission request
         session: Database session
         lm: DSPy language model
+        dataset_service: Dataset service dependency
 
     Returns:
         Feedback submission response with proposal
+
+    Raises:
+        HTTPException: If dataset not found or invalid
     """
     try:
+        csv_path = dataset_service.get_output_csv_path(request.dataset_id, request.foldername)
+
         result = submit_feedback(
             session=session,
-            csv_path=request.csv_path,
+            csv_path=csv_path,
             row_index=request.row_index,
             corrected_path=request.corrected_path,
             feedback_text=request.feedback_text,
-            dataset_name=request.dataset_name,
-            lm=lm
+            dataset_name=request.dataset_id,
+            lm=lm,
         )
         return result
-    except Exception as e:
+    except (DatasetNotFoundError, InvalidDatasetIdError, TransactionNotFoundError) as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -91,7 +77,7 @@ def create_feedback(
 def approve_user_feedback(
     feedback_id: int,
     request: ApproveFeedbackRequest,
-    session: Session = Depends(get_db_session)
+    session: Session = Depends(get_db_session),
 ):
     """
     Approve feedback with optional user edits.
@@ -103,22 +89,27 @@ def approve_user_feedback(
 
     Returns:
         Approval response
+
+    Raises:
+        HTTPException: If feedback not found
     """
     try:
         result = approve_feedback(
             session=session,
             feedback_id=feedback_id,
-            user_edited_text=request.edited_text
+            user_edited_text=request.edited_text,
         )
         return result
-    except Exception as e:
+    except ValueError as e:
+        if "not found" in str(e).lower():
+            raise HTTPException(status_code=404, detail=str(e))
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/{feedback_id}/preview", response_model=PreviewAffectedRowsResponse)
 def get_preview_affected_rows(
     feedback_id: int,
-    session: Session = Depends(get_db_session)
+    session: Session = Depends(get_db_session),
 ):
     """
     Preview rows that will be affected by this action.
@@ -129,11 +120,16 @@ def get_preview_affected_rows(
 
     Returns:
         Preview of affected rows
+
+    Raises:
+        HTTPException: If feedback not found
     """
     try:
         result = preview_affected_rows(session=session, feedback_id=feedback_id)
         return result
-    except Exception as e:
+    except ValueError as e:
+        if "not found" in str(e).lower():
+            raise HTTPException(status_code=404, detail=str(e))
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -141,7 +137,7 @@ def get_preview_affected_rows(
 def apply_feedback(
     feedback_id: int,
     request: ApplyBulkRequest,
-    session: Session = Depends(get_db_session)
+    session: Session = Depends(get_db_session),
 ):
     """
     Execute action and apply bulk corrections.
@@ -153,17 +149,27 @@ def apply_feedback(
 
     Returns:
         Bulk apply response
+
+    Raises:
+        HTTPException: If feedback not found or in invalid state
     """
     try:
         # First execute the action (update taxonomy/create rules)
         execute_action(session=session, feedback_id=feedback_id)
 
         # Then apply bulk corrections to CSV
+        dataset_service = get_dataset_service()
         result = apply_bulk_corrections(
             session=session,
             feedback_id=feedback_id,
-            row_indices=request.row_indices
+            row_indices=request.row_indices,
+            dataset_service=dataset_service,
         )
         return result
-    except Exception as e:
+    except ValueError as e:
+        error_str = str(e).lower()
+        if "not found" in error_str:
+            raise HTTPException(status_code=404, detail=str(e))
+        if "must be approved" in error_str or "status" in error_str:
+            raise HTTPException(status_code=400, detail=str(e))
         raise HTTPException(status_code=400, detail=str(e))

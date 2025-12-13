@@ -130,6 +130,15 @@ class AppConfig(BaseSettings):
     # DSPy configuration
     dspy: DSPyConfig = Field(default_factory=DSPyConfig)
 
+    # Storage configuration
+    storage_type: str = Field(default="local", alias="STORAGE_TYPE")
+    s3_bucket: Optional[str] = Field(default=None, alias="S3_BUCKET")
+    s3_prefix: str = Field(default="benchmarks/", alias="S3_PREFIX")
+    local_base_dir: str = Field(default="benchmarks", alias="LOCAL_BASE_DIR")
+
+    # CORS configuration
+    cors_origins: str = Field(default="", alias="CORS_ORIGINS")
+
     class Config:
         env_file = "ops/.env"
         case_sensitive = False
