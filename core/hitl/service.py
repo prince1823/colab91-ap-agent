@@ -199,8 +199,11 @@ class FeedbackService:
             raise ValueError(f"Feedback must be approved before execution. Current status: {feedback.status}")
 
         action_type = feedback.action_type
-        action_details = feedback.action_details
+        action_details = feedback.action_details.copy()  # Make a copy to avoid modifying original
         dataset_name = feedback.dataset_name
+
+        # Add feedback_id to action_details for tracking (if executor supports it)
+        action_details['_feedback_id'] = feedback_id
 
         # Get the appropriate executor
         executor = self.action_executors.get(action_type)

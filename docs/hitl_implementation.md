@@ -42,21 +42,49 @@ Bulk Application
 
 ## Database Schema
 
-### 1. Extended `supplier_classifications` Table
+### 1. Supplier Rules Tables
 
-**New Columns Added:**
+**Supplier rules are stored in dedicated tables:**
+
+#### `supplier_direct_mappings` Table
 ```sql
-supplier_rule_type VARCHAR(20)        -- "category_a" or "category_b"
-supplier_rule_paths JSON              -- Array of classification paths
-supplier_rule_created_at DATETIME
-supplier_rule_active BOOLEAN DEFAULT TRUE
+CREATE TABLE supplier_direct_mappings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    supplier_name VARCHAR(255) NOT NULL,
+    classification_path VARCHAR(500) NOT NULL,  -- L1|L2|L3|L4|L5
+    dataset_name VARCHAR(255),                  -- NULL = applies to all datasets
+    priority INTEGER DEFAULT 10,
+    created_at DATETIME,
+    updated_at DATETIME,
+    active BOOLEAN DEFAULT TRUE,
+    created_by VARCHAR(255),                     -- "hitl_feedback" or user name
+    notes TEXT
+);
 ```
 
-**Purpose:** Store supplier-level classification rules globally per dataset.
+**Purpose:** Store Category A supplier rules (100% confidence, single path). When a supplier in this table is encountered, skip LLM classification entirely and directly map all transactions to the specified classification path.
+
+#### `supplier_taxonomy_constraints` Table
+```sql
+CREATE TABLE supplier_taxonomy_constraints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    supplier_name VARCHAR(255) NOT NULL,
+    allowed_taxonomy_paths JSON NOT NULL,        -- Array of allowed paths
+    dataset_name VARCHAR(255),                  -- NULL = applies to all datasets
+    priority INTEGER DEFAULT 10,
+    created_at DATETIME,
+    updated_at DATETIME,
+    active BOOLEAN DEFAULT TRUE,
+    created_by VARCHAR(255),                     -- "hitl_feedback" or user name
+    notes TEXT
+);
+```
+
+**Purpose:** Store Category B supplier rules (multiple allowed paths). When a supplier in this table is encountered, instead of using RAG to retrieve taxonomy paths, use the stored list of allowed taxonomy paths for LLM classification.
 
 **Rule Categories:**
-- **Category A**: One-to-one mapping (supplier always maps to single classification)
-- **Category B**: One-to-many mapping (supplier can map to multiple classifications)
+- **Category A (DirectMapping)**: One-to-one mapping (supplier always maps to single classification, 100% confidence, skip LLM)
+- **Category B (TaxonomyConstraint)**: One-to-many mapping (supplier can map to multiple classifications, constrains LLM to specific paths)
 
 ---
 
@@ -134,7 +162,108 @@ http://localhost:8000/api/v1
 
 ### Endpoints
 
-#### 1. GET `/datasets`
+#### 0. GET `/feedback`
+
+List all feedback items with optional filters and pagination.
+
+**Query Parameters:**
+- `status` (optional): Filter by status ("pending", "approved", "applied")
+- `dataset_id` (optional): Filter by dataset ID
+- `action_type` (optional): Filter by action type ("company_context", "taxonomy_description", "supplier_rule", "transaction_rule")
+- `page` (optional, default: 1): Page number (1-indexed)
+- `limit` (optional, default: 50, max: 200): Items per page
+
+**Response:**
+```json
+{
+  "items": [
+    {
+      "id": 1,
+      "dataset_id": "innova",
+      "row_index": 42,
+      "original_classification": "facilities|utilities|electricity",
+      "corrected_classification": "it & telecom|cloud services|iaas",
+      "action_type": "supplier_rule",
+      "status": "pending",
+      "created_at": "2024-01-15T10:30:00"
+    }
+  ],
+  "total": 25,
+  "page": 1,
+  "pages": 1,
+  "limit": 50
+}
+```
+
+**Example cURL:**
+```bash
+curl "http://localhost:8000/api/v1/feedback?status=pending&dataset_id=innova&page=1&limit=50"
+```
+
+---
+
+#### 1. GET `/feedback/{feedback_id}`
+
+Get detailed information about a specific feedback item.
+
+**Path Parameters:**
+- `feedback_id` (required): Feedback ID
+
+**Response:**
+```json
+{
+  "id": 1,
+  "dataset_id": "innova",
+  "foldername": "default",
+  "row_index": 42,
+  "original_classification": "facilities|utilities|electricity",
+  "corrected_classification": "it & telecom|cloud services|iaas",
+  "feedback_text": "This supplier always provides cloud infrastructure services",
+  "action_type": "supplier_rule",
+  "action_details": {
+    "supplier_name": "AWS",
+    "rule_category": "A",
+    "classification_paths": ["it & telecom|cloud services|iaas"]
+  },
+  "action_reasoning": "User indicated supplier always provides this service",
+  "status": "pending",
+  "proposal_text": "Supplier Rule\nSupplier: AWS\n...",
+  "user_edited_text": null,
+  "created_at": "2024-01-15T10:30:00",
+  "approved_at": null,
+  "applied_at": null
+}
+```
+
+**Example cURL:**
+```bash
+curl "http://localhost:8000/api/v1/feedback/1"
+```
+
+---
+
+#### 2. DELETE `/feedback/{feedback_id}`
+
+Delete/reject a feedback item. Only pending feedback can be deleted.
+
+**Path Parameters:**
+- `feedback_id` (required): Feedback ID
+
+**Response:**
+```json
+{
+  "message": "Feedback 1 deleted successfully"
+}
+```
+
+**Example cURL:**
+```bash
+curl -X DELETE "http://localhost:8000/api/v1/feedback/1"
+```
+
+---
+
+#### 7. GET `/datasets`
 
 List available datasets.
 
@@ -152,7 +281,7 @@ List available datasets.
 
 ---
 
-#### 2. GET `/transactions`
+#### 8. GET `/transactions`
 
 Query classified transactions from CSV.
 
@@ -179,25 +308,32 @@ Query classified transactions from CSV.
 
 #### 3. POST `/feedback`
 
-Submit user feedback.
+Submit user feedback and get LLM-generated action proposal.
 
 **Request Body:**
 ```json
 {
-  "csv_path": "benchmarks/default/innova/output.csv",
+  "dataset_id": "innova",
+  "foldername": "default",
   "row_index": 42,
   "corrected_path": "it & telecom|cloud services|iaas",
-  "feedback_text": "This supplier always provides cloud infrastructure services",
-  "dataset_name": "innova"
+  "feedback_text": "This supplier always provides cloud infrastructure services"
 }
 ```
+
+**Field Descriptions:**
+- `dataset_id` (required): Dataset identifier (e.g., "innova", "fox")
+- `foldername` (optional, default: "default"): Folder name for dataset organization
+- `row_index` (required): Row index in CSV (0-based)
+- `corrected_path` (required): Corrected classification path (L1|L2|L3|L4 format)
+- `feedback_text` (required): Natural language explanation of why classification was wrong
 
 **Response:**
 ```json
 {
   "feedback_id": 1,
   "action_type": "supplier_rule",
-  "proposal_text": "Supplier Rule\nSupplier: AWS\n...",
+  "proposal_text": "Supplier Rule\nSupplier: AWS\nRule Type: Category A (one-to-one mapping)\nClassification:\n  - it & telecom|cloud services|iaas\n\nThis rule will apply to all future transactions from this supplier.",
   "action_details": {
     "supplier_name": "AWS",
     "rule_category": "A",
@@ -206,11 +342,27 @@ Submit user feedback.
 }
 ```
 
+**Example cURL:**
+```bash
+curl -X POST "http://localhost:8000/api/v1/feedback" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "dataset_id": "innova",
+    "foldername": "default",
+    "row_index": 42,
+    "corrected_path": "it & telecom|cloud services|iaas",
+    "feedback_text": "AWS always provides cloud infrastructure services"
+  }'
+```
+
 ---
 
-#### 4. POST `/feedback/{id}/approve`
+#### 4. POST `/feedback/{feedback_id}/approve`
 
-Approve feedback proposal.
+Approve feedback proposal with optional user edits.
+
+**Path Parameters:**
+- `feedback_id` (required): Feedback ID from submission
 
 **Request Body:**
 ```json
@@ -227,26 +379,59 @@ Approve feedback proposal.
 }
 ```
 
----
-
-#### 5. GET `/feedback/{id}/preview`
-
-Preview affected rows.
-
-**Response:**
-```json
-{
-  "rows": [...],
-  "count": 15,
-  "row_indices": [42, 87, 133, ...]
-}
+**Example cURL:**
+```bash
+curl -X POST "http://localhost:8000/api/v1/feedback/1/approve" \
+  -H "Content-Type: application/json" \
+  -d '{}'
 ```
 
 ---
 
-#### 6. POST `/feedback/{id}/apply`
+#### 5. GET `/feedback/{feedback_id}/preview`
 
-Execute action and apply bulk corrections.
+Preview rows that will be affected by this action.
+
+**Path Parameters:**
+- `feedback_id` (required): Feedback ID
+
+**Response:**
+```json
+{
+  "rows": [
+    {
+      "row_idx": 42,
+      "supplier_name": "AWS",
+      "L1": "facilities",
+      "L2": "utilities",
+      "amount": 5000.00
+    },
+    {
+      "row_idx": 87,
+      "supplier_name": "AWS",
+      "L1": "it & telecom",
+      "L2": "software",
+      "amount": 12000.00
+    }
+  ],
+  "count": 15,
+  "row_indices": [42, 87, 133, 201, 245, 312, 378, 445, 512, 589, 656, 723, 790, 857, 924]
+}
+```
+
+**Example cURL:**
+```bash
+curl "http://localhost:8000/api/v1/feedback/1/preview"
+```
+
+---
+
+#### 6. POST `/feedback/{feedback_id}/apply`
+
+Execute action and apply bulk corrections to CSV.
+
+**Path Parameters:**
+- `feedback_id` (required): Feedback ID (must be in "approved" status)
 
 **Request Body:**
 ```json
@@ -255,12 +440,31 @@ Execute action and apply bulk corrections.
 }
 ```
 
+**Field Descriptions:**
+- `row_indices` (required): List of row indices to update with corrected classification
+
 **Response:**
 ```json
 {
   "updated_count": 3
 }
 ```
+
+**What This Does:**
+1. Executes the action (creates rule, updates taxonomy, etc.)
+2. Updates specified rows in CSV with corrected classification
+3. Sets feedback status to "applied"
+
+**Example cURL:**
+```bash
+curl -X POST "http://localhost:8000/api/v1/feedback/1/apply" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "row_indices": [42, 87, 133]
+  }'
+```
+
+**Note:** For supplier rules, the rule is created in the database and will affect future classifications even if you don't apply bulk corrections to existing rows.
 
 ---
 
@@ -369,13 +573,22 @@ You can edit the proposed text above before approving.
 ```
 
 **Rule Categories:**
-- **Category A**: Single classification path (one-to-one)
-- **Category B**: Multiple classification paths (one-to-many)
+- **Category A (DirectMapping)**: Single classification path (one-to-one, 100% confidence)
+  - Example: `{"rule_category": "A", "classification_paths": ["it & telecom|cloud services|iaas"]}`
+  - When this supplier is encountered, ALL transactions are directly mapped to this path without LLM classification
+  - Stored in `supplier_direct_mappings` table
+  
+- **Category B (TaxonomyConstraint)**: Multiple classification paths (one-to-many)
+  - Example: `{"rule_category": "B", "classification_paths": ["it & telecom|cloud services|iaas", "it & telecom|cloud services|paas"]}`
+  - When this supplier is encountered, LLM classification is constrained to only these paths (replaces RAG)
+  - Stored in `supplier_taxonomy_constraints` table
 
 **Execution:**
-- Updates `supplier_classifications` table
-- Sets `supplier_rule_*` columns for the supplier+dataset
-- Global per dataset (not scoped to specific run)
+- **Category A**: Creates/updates entry in `supplier_direct_mappings` table
+- **Category B**: Creates/updates entry in `supplier_taxonomy_constraints` table
+- Deactivates any existing rules for the same supplier+dataset (ensures only one active rule)
+- Rules are global per dataset (not scoped to specific run)
+- Rules are immediately available for future classifications
 
 **Bulk Application:**
 - Finds all rows with matching `supplier_name` in CSV
@@ -407,56 +620,342 @@ You can edit the proposed text above before approving.
 
 ---
 
-## Workflow Example
+## Complete Workflow Examples
 
-### User Journey
+### Example 1: Supplier Rule - Category A (Direct Mapping)
 
-1. **User reviews classified transactions**
-   - GET `/transactions?csv_path=...&page=1`
-   - Sees row 42 is misclassified
+**Scenario:** User finds that AWS transactions are always cloud infrastructure services.
 
-2. **User submits feedback**
-   ```json
-   POST /feedback
-   {
-     "csv_path": "benchmarks/default/innova/output.csv",
-     "row_index": 42,
-     "corrected_path": "it & telecom|cloud services|iaas",
-     "feedback_text": "AWS always provides cloud infrastructure",
-     "dataset_name": "innova"
-   }
+#### Step 1: Submit Feedback
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/feedback" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "dataset_id": "innova",
+    "foldername": "default",
+    "row_index": 42,
+    "corrected_path": "it & telecom|cloud services|iaas",
+    "feedback_text": "AWS always provides cloud infrastructure services. Every transaction from AWS should be classified as IaaS."
+  }'
+```
+
+**Response:**
+```json
+{
+  "feedback_id": 1,
+  "action_type": "supplier_rule",
+  "proposal_text": "Supplier Rule\nSupplier: AWS\nRule Type: Category A (one-to-one mapping)\nClassification:\n  - it & telecom|cloud services|iaas\n\nThis rule will apply to all future transactions from this supplier.",
+  "action_details": {
+    "supplier_name": "AWS",
+    "rule_category": "A",
+    "classification_paths": ["it & telecom|cloud services|iaas"]
+  }
+}
+```
+
+#### Step 2: Review and Approve
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/feedback/1/approve" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+**Response:**
+```json
+{
+  "status": "approved",
+  "issues": []
+}
+```
+
+#### Step 3: Preview Affected Rows
+
+```bash
+curl "http://localhost:8000/api/v1/feedback/1/preview"
+```
+
+**Response:**
+```json
+{
+  "rows": [
+    {
+      "row_idx": 42,
+      "supplier_name": "AWS",
+      "L1": "facilities",
+      "L2": "utilities",
+      "amount": 5000.00
+    },
+    {
+      "row_idx": 87,
+      "supplier_name": "AWS",
+      "L1": "it & telecom",
+      "L2": "software",
+      "amount": 12000.00
+    },
+    {
+      "row_idx": 133,
+      "supplier_name": "AWS",
+      "L1": "it & telecom",
+      "L2": "cloud services",
+      "amount": 8000.00
+    }
+  ],
+  "count": 3,
+  "row_indices": [42, 87, 133]
+}
+```
+
+#### Step 4: Apply Feedback
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/feedback/1/apply" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "row_indices": [42, 87, 133]
+  }'
+```
+
+**Response:**
+```json
+{
+  "updated_count": 3
+}
+```
+
+**What Happens:**
+1. Creates entry in `supplier_direct_mappings` table:
+   ```sql
+   INSERT INTO supplier_direct_mappings 
+   (supplier_name, classification_path, dataset_name, priority, created_by, notes, active)
+   VALUES 
+   ('aws', 'it & telecom|cloud services|iaas', 'innova', 10, 'hitl_feedback', 'Created via HITL feedback (ID: 1)', TRUE);
    ```
+2. Updates 3 rows in the CSV with the corrected classification
+3. Sets feedback status to "applied"
+4. **Future Impact:** All future transactions from AWS will automatically be classified as "it & telecom|cloud services|iaas" without LLM classification
 
-3. **LLM analyzes and proposes action**
-   - FeedbackAction agent determines this is a supplier rule (Action 3)
-   - Returns proposal: "Create supplier rule for AWS"
+---
 
-4. **User approves proposal**
-   ```json
-   POST /feedback/1/approve
-   {
-     "edited_text": null
-   }
+### Example 2: Supplier Rule - Category B (Taxonomy Constraint)
+
+**Scenario:** User finds that Microsoft can provide either SaaS or IaaS services, but always within cloud services.
+
+#### Step 1: Submit Feedback
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/feedback" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "dataset_id": "innova",
+    "foldername": "default",
+    "row_index": 156,
+    "corrected_path": "it & telecom|cloud services|saas",
+    "feedback_text": "Microsoft provides cloud services, specifically either SaaS or IaaS. Their transactions should be constrained to these two categories only."
+  }'
+```
+
+**Response:**
+```json
+{
+  "feedback_id": 2,
+  "action_type": "supplier_rule",
+  "proposal_text": "Supplier Rule\nSupplier: Microsoft\nRule Type: Category B (multiple possible classifications)\nClassification:\n  - it & telecom|cloud services|saas\n  - it & telecom|cloud services|iaas\n\nThis rule will apply to all future transactions from this supplier.",
+  "action_details": {
+    "supplier_name": "Microsoft",
+    "rule_category": "B",
+    "classification_paths": [
+      "it & telecom|cloud services|saas",
+      "it & telecom|cloud services|iaas"
+    ]
+  }
+}
+```
+
+#### Step 2: Approve and Apply
+
+```bash
+# Approve
+curl -X POST "http://localhost:8000/api/v1/feedback/2/approve" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Apply
+curl -X POST "http://localhost:8000/api/v1/feedback/2/apply" \
+  -H "Content-Type: application/json" \
+  -d '{"row_indices": [156, 201, 245]}'
+```
+
+**What Happens:**
+1. Creates entry in `supplier_taxonomy_constraints` table:
+   ```sql
+   INSERT INTO supplier_taxonomy_constraints 
+   (supplier_name, allowed_taxonomy_paths, dataset_name, priority, created_by, notes, active)
+   VALUES 
+   ('microsoft', '["it & telecom|cloud services|saas", "it & telecom|cloud services|iaas"]', 'innova', 10, 'hitl_feedback', 'Created via HITL feedback (ID: 2)', TRUE);
    ```
+2. Updates rows in CSV
+3. **Future Impact:** When Microsoft transactions are classified, the LLM will only consider these two paths (replaces RAG search)
 
-5. **User previews affected rows**
-   ```json
-   GET /feedback/1/preview
-   // Returns 15 rows with AWS as supplier
+---
+
+### Example 3: Transaction Rule
+
+**Scenario:** User finds that GL code 1234 always represents utilities expenses.
+
+#### Step 1: Submit Feedback
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/feedback" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "dataset_id": "innova",
+    "foldername": "default",
+    "row_index": 89,
+    "corrected_path": "facilities|utilities|electricity",
+    "feedback_text": "GL code 1234 is always used for electricity utilities. Any transaction with this GL code should be classified as facilities|utilities|electricity."
+  }'
+```
+
+**Response:**
+```json
+{
+  "feedback_id": 3,
+  "action_type": "transaction_rule",
+  "proposal_text": "Transaction Rule\nRule: if gl_code = 1234, always classify as facilities|utilities|electricity\n\nRule Name: GL 1234 -> Utilities",
+  "action_details": {
+    "condition_field": "gl_code",
+    "condition_value": "1234",
+    "classification_path": "facilities|utilities|electricity",
+    "rule_name": "GL 1234 -> Utilities"
+  }
+}
+```
+
+#### Step 2: Approve and Apply
+
+```bash
+# Approve
+curl -X POST "http://localhost:8000/api/v1/feedback/3/approve" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Preview affected rows
+curl "http://localhost:8000/api/v1/feedback/3/preview"
+
+# Apply
+curl -X POST "http://localhost:8000/api/v1/feedback/3/apply" \
+  -H "Content-Type: application/json" \
+  -d '{"row_indices": [89, 142, 203, 267]}'
+```
+
+**What Happens:**
+1. Creates entry in `transaction_rules` table
+2. Updates all rows with `gl_code = "1234"` in CSV
+3. **Future Impact:** All future transactions with GL code 1234 will be automatically classified as "facilities|utilities|electricity"
+
+---
+
+### Example 4: Company Context Update
+
+**Scenario:** Company pivoted from broadcast television to streaming services.
+
+#### Step 1: Submit Feedback
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/feedback" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "dataset_id": "innova",
+    "foldername": "default",
+    "row_index": 12,
+    "corrected_path": "media & entertainment|streaming|subscription",
+    "feedback_text": "Our company has pivoted from broadcast television to streaming and digital media. The business focus has changed."
+  }'
+```
+
+**Response:**
+```json
+{
+  "feedback_id": 4,
+  "action_type": "company_context",
+  "proposal_text": "Company Context Update\nField: business_focus\n\nCurrent:\nBroadcast Television\n\nProposed:\nStreaming and Digital Media\n\nYou can edit the proposed text above before approving.",
+  "action_details": {
+    "field_name": "business_focus",
+    "current_value": "Broadcast Television",
+    "proposed_value": "Streaming and Digital Media"
+  }
+}
+```
+
+#### Step 2: Approve
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/feedback/4/approve" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+**What Happens:**
+1. Updates `taxonomies/innova.yaml` file:
+   ```yaml
+   company_context:
+     business_focus: "Streaming and Digital Media"
    ```
+2. No database changes
+3. **Future Impact:** Future classifications will use the updated company context
 
-6. **User applies corrections**
-   ```json
-   POST /feedback/1/apply
-   {
-     "row_indices": [42, 87, 133, ...]
-   }
+---
+
+### Example 5: Taxonomy Description Update
+
+**Scenario:** User wants to clarify what the IaaS category includes.
+
+#### Step 1: Submit Feedback
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/feedback" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "dataset_id": "innova",
+    "foldername": "default",
+    "row_index": 78,
+    "corrected_path": "it & telecom|cloud services|iaas",
+    "feedback_text": "The IaaS category should include cloud infrastructure services like compute, storage, and networking. It should not include SaaS applications."
+  }'
+```
+
+**Response:**
+```json
+{
+  "feedback_id": 5,
+  "action_type": "taxonomy_description",
+  "proposal_text": "Taxonomy Description Update\nPath: it & telecom|cloud services|iaas\n\nCurrent Description:\nInfrastructure as a service providing virtualized computing resources.\n\nProposed Description:\nCloud infrastructure including compute, storage, and networking services. Does not include SaaS applications or software subscriptions.",
+  "action_details": {
+    "taxonomy_path": "it & telecom|cloud services|iaas",
+    "current_description": "Infrastructure as a service providing virtualized computing resources.",
+    "proposed_description": "Cloud infrastructure including compute, storage, and networking services. Does not include SaaS applications or software subscriptions."
+  }
+}
+```
+
+#### Step 2: Approve
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/feedback/5/approve" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+**What Happens:**
+1. Updates `taxonomies/innova.yaml` file:
+   ```yaml
+   taxonomy_descriptions:
+     "it & telecom|cloud services|iaas": "Cloud infrastructure including compute, storage, and networking services. Does not include SaaS applications or software subscriptions."
    ```
-
-7. **System executes**
-   - Creates supplier rule in `supplier_classifications` table
-   - Updates 15 rows in output.csv
-   - Sets feedback status to "applied"
+2. No database changes
+3. **Future Impact:** Future classifications will use the updated taxonomy description for better accuracy
 
 ---
 

@@ -39,12 +39,6 @@ class SupplierClassification(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    # HITL: Supplier rule columns
-    supplier_rule_type = Column(String(20), nullable=True)  # "category_a" or "category_b"
-    supplier_rule_paths = Column(JSON, nullable=True)  # Category A: single path, Category B: array
-    supplier_rule_created_at = Column(DateTime, nullable=True)
-    supplier_rule_active = Column(Boolean, default=True, nullable=True)
-
     # Composite indexes for exact match cache
     __table_args__ = (
         Index("idx_run_supplier_hash", "run_id", "supplier_name", "transaction_hash"),

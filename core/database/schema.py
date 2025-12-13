@@ -35,10 +35,13 @@ def init_database(db_path: Path, echo: bool = False):
 
 def _migrate_existing_database(engine):
     """
-    Migrate existing database to add run_id, dataset_name, and HITL columns if they don't exist.
+    Migrate existing database to add run_id, dataset_name if they don't exist.
     Sets default run_id for existing entries.
     Also creates indexes and unique constraints for supplier rules tables if they don't exist.
     Creates dataset_processing_states table if it doesn't exist.
+    
+    Note: HITL supplier rule columns are no longer used. Rules are stored in
+    supplier_direct_mappings and supplier_taxonomy_constraints tables.
     """
     from sqlalchemy import inspect, text
 
@@ -90,19 +93,10 @@ def _migrate_existing_database(engine):
                     conn.execute(text("ALTER TABLE supplier_classifications ADD COLUMN dataset_name VARCHAR(255)"))
                     conn.commit()
 
-            # Add HITL supplier rule columns if they don't exist
-            hitl_columns = {
-                'supplier_rule_type': 'VARCHAR(20)',
-                'supplier_rule_paths': 'JSON',
-                'supplier_rule_created_at': 'DATETIME',
-                'supplier_rule_active': 'BOOLEAN'
-            }
-
-            for col_name, col_type in hitl_columns.items():
-                if col_name not in columns:
-                    with engine.connect() as conn:
-                        conn.execute(text(f"ALTER TABLE supplier_classifications ADD COLUMN {col_name} {col_type}"))
-                        conn.commit()
+            # Note: HITL supplier rule columns (supplier_rule_type, supplier_rule_paths, etc.)
+            # are no longer used. Rules are now stored in supplier_direct_mappings and
+            # supplier_taxonomy_constraints tables. Existing columns in old databases
+            # will remain but are not referenced.
 
             # Create indexes if they don't exist
             indexes = [idx['name'] for idx in inspector.get_indexes('supplier_classifications')]
