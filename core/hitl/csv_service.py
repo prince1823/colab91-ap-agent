@@ -1,39 +1,15 @@
 """CSV operations using DuckDB for HITL."""
 
-import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import duckdb
 import pandas as pd
 
-
-def _get_column_mapping(csv_path: str) -> Dict[str, str]:
-    """
-    Get the canonical to actual column mapping from the CSV.
-
-    Args:
-        csv_path: Path to the output CSV file
-
-    Returns:
-        Dictionary mapping canonical column names to actual column names
-    """
-    con = duckdb.connect()
-    try:
-        # Get columns_used from first row
-        result = con.execute(
-            "SELECT columns_used FROM read_csv_auto(?) LIMIT 1",
-            [csv_path]
-        ).fetchone()
-
-        if result and result[0]:
-            return json.loads(result[0])
-        return {}
-    except Exception:
-        # Fallback to empty mapping if columns_used doesn't exist
-        return {}
-    finally:
-        con.close()
+from core.hitl.csv_helpers import (
+    build_where_clause,
+    duckdb_connection,
+    get_column_mapping,
+)
 
 
 def query_classified_transactions(
@@ -57,47 +33,27 @@ def query_classified_transactions(
     filters = filters or {}
 
     # Get column mapping to use actual column names
-    column_mapping = _get_column_mapping(csv_path)
+    column_mapping = get_column_mapping(csv_path)
 
     # Build WHERE clause
-    where_clauses = []
-    params = []
-
-    if filters.get('l1'):
-        where_clauses.append("L1 = ?")
-        params.append(filters['l1'])
-
-    if filters.get('confidence'):
-        where_clauses.append("confidence = ?")
-        params.append(filters['confidence'])
-
-    if filters.get('supplier_name'):
-        # Use canonicalized column mapping to get the actual column name
-        actual_col = column_mapping.get('supplier_name', 'Supplier')
-        where_clauses.append(f'LOWER("{actual_col}") = LOWER(?)')
-        params.append(filters['supplier_name'])
-
-    where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    where_clause, params = build_where_clause(filters, column_mapping)
 
     # Calculate offset
     offset = (page - 1) * limit
 
     # Query with DuckDB
-    con = duckdb.connect()
+    with duckdb_connection() as con:
+        # Get total count
+        count_query = f"SELECT COUNT(*) as total FROM read_csv_auto(?) {where_clause}"
+        total = con.execute(count_query, [csv_path] + params).fetchone()[0]
 
-    # Get total count
-    count_query = f"SELECT COUNT(*) as total FROM read_csv_auto(?) {where_clause}"
-    total = con.execute(count_query, [csv_path] + params).fetchone()[0]
-
-    # Get paginated rows
-    data_query = f"""
-        SELECT * FROM read_csv_auto(?)
-        {where_clause}
-        LIMIT ? OFFSET ?
-    """
-    result_df = con.execute(data_query, [csv_path] + params + [limit, offset]).fetchdf()
-
-    con.close()
+        # Get paginated rows
+        data_query = f"""
+            SELECT * FROM read_csv_auto(?)
+            {where_clause}
+            LIMIT ? OFFSET ?
+        """
+        result_df = con.execute(data_query, [csv_path] + params + [limit, offset]).fetchdf()
 
     return {
         'rows': result_df.to_dict('records'),
@@ -119,12 +75,9 @@ def get_transaction_by_row_index(csv_path: str, row_index: int) -> Optional[Dict
     Returns:
         Row as dictionary, or None if not found
     """
-    con = duckdb.connect()
-
-    query = "SELECT * FROM read_csv_auto(?) LIMIT 1 OFFSET ?"
-    result_df = con.execute(query, [csv_path, row_index]).fetchdf()
-
-    con.close()
+    with duckdb_connection() as con:
+        query = "SELECT * FROM read_csv_auto(?) LIMIT 1 OFFSET ?"
+        result_df = con.execute(query, [csv_path, row_index]).fetchdf()
 
     if result_df.empty:
         return None
@@ -155,14 +108,12 @@ def list_available_datasets() -> List[Dict]:
         foldername = folder_path.parent.name
 
         # Get row count using DuckDB
-        con = duckdb.connect()
         try:
-            count_query = "SELECT COUNT(*) as count FROM read_csv_auto(?)"
-            row_count = con.execute(count_query, [str(output_csv)]).fetchone()[0]
+            with duckdb_connection() as con:
+                count_query = "SELECT COUNT(*) as count FROM read_csv_auto(?)"
+                row_count = con.execute(count_query, [str(output_csv)]).fetchone()[0]
         except Exception:
             row_count = 0
-        finally:
-            con.close()
 
         datasets.append({
             'csv_path': str(output_csv),
@@ -185,20 +136,17 @@ def find_rows_by_supplier(csv_path: str, supplier_name: str) -> List[Dict]:
     Returns:
         List of row dictionaries and their indices
     """
-    con = duckdb.connect()
-
     # Get column mapping to use actual column name
-    column_mapping = _get_column_mapping(csv_path)
+    column_mapping = get_column_mapping(csv_path)
     actual_col = column_mapping.get('supplier_name', 'Supplier')
 
-    query = f"""
-        SELECT *, row_number() OVER () - 1 as row_idx
-        FROM read_csv_auto(?)
-        WHERE LOWER("{actual_col}") = LOWER(?)
-    """
-    result_df = con.execute(query, [csv_path, supplier_name]).fetchdf()
-
-    con.close()
+    with duckdb_connection() as con:
+        query = f"""
+            SELECT *, row_number() OVER () - 1 as row_idx
+            FROM read_csv_auto(?)
+            WHERE LOWER("{actual_col}") = LOWER(?)
+        """
+        result_df = con.execute(query, [csv_path, supplier_name]).fetchdf()
 
     return result_df.to_dict('records')
 
@@ -215,18 +163,15 @@ def find_rows_by_condition(csv_path: str, condition_field: str, condition_value:
     Returns:
         List of row dictionaries and their indices
     """
-    con = duckdb.connect()
-
     # Dynamically build query - be careful with SQL injection
     # We trust condition_field comes from validated rule creation
-    query = f"""
-        SELECT *, row_number() OVER () - 1 as row_idx
-        FROM read_csv_auto(?)
-        WHERE "{condition_field}" = ?
-    """
-    result_df = con.execute(query, [csv_path, condition_value]).fetchdf()
-
-    con.close()
+    with duckdb_connection() as con:
+        query = f"""
+            SELECT *, row_number() OVER () - 1 as row_idx
+            FROM read_csv_auto(?)
+            WHERE "{condition_field}" = ?
+        """
+        result_df = con.execute(query, [csv_path, condition_value]).fetchdf()
 
     return result_df.to_dict('records')
 

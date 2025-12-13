@@ -37,11 +37,34 @@ def _migrate_existing_database(engine):
     """
     Migrate existing database to add run_id, dataset_name, and HITL columns if they don't exist.
     Sets default run_id for existing entries.
+    Also creates indexes and unique constraints for supplier rules tables if they don't exist.
     """
     from sqlalchemy import inspect, text
 
     try:
         inspector = inspect(engine)
+
+        # Migrate supplier rules tables (direct mappings and taxonomy constraints)
+        for table_name in ['supplier_direct_mappings', 'supplier_taxonomy_constraints']:
+            if table_name in inspector.get_table_names():
+                indexes = [idx['name'] for idx in inspector.get_indexes(table_name)]
+                
+                # Create composite lookup index if it doesn't exist
+                lookup_idx_name = f"idx_{table_name.split('_')[-1]}_lookup"  # idx_direct_mapping_lookup or idx_constraint_lookup
+                if lookup_idx_name not in indexes:
+                    with engine.connect() as conn:
+                        try:
+                            if table_name == 'supplier_direct_mappings':
+                                conn.execute(text(
+                                    f"CREATE INDEX IF NOT EXISTS {lookup_idx_name} ON {table_name}(supplier_name, dataset_name, active)"
+                                ))
+                            else:
+                                conn.execute(text(
+                                    f"CREATE INDEX IF NOT EXISTS {lookup_idx_name} ON {table_name}(supplier_name, dataset_name, active)"
+                                ))
+                            conn.commit()
+                        except Exception:
+                            pass  # Index might already exist or table structure different
 
         # Check if supplier_classifications table exists
         if 'supplier_classifications' in inspector.get_table_names():

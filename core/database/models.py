@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, JSON, Column, DateTime, Index, Integer, String, Text
+from sqlalchemy import Boolean, JSON, Column, DateTime, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
@@ -141,6 +141,11 @@ class SupplierDirectMapping(Base):
     notes = Column(Text, nullable=True)  # Optional notes about why this mapping exists
 
     __table_args__ = (
+        # Composite index for fast lookups
+        Index("idx_direct_mapping_lookup", "supplier_name", "dataset_name", "active"),
+        # Unique constraint: only one active mapping per supplier+dataset
+        UniqueConstraint("supplier_name", "dataset_name", "active", name="uq_direct_mapping_active"),
+        # Individual indexes for filtering
         Index("idx_direct_mapping_supplier", "supplier_name", "active"),
         Index("idx_direct_mapping_dataset", "dataset_name", "active"),
     )
@@ -172,6 +177,11 @@ class SupplierTaxonomyConstraint(Base):
     notes = Column(Text, nullable=True)  # Optional notes about why these paths are allowed
 
     __table_args__ = (
+        # Composite index for fast lookups
+        Index("idx_constraint_lookup", "supplier_name", "dataset_name", "active"),
+        # Unique constraint: only one active constraint per supplier+dataset
+        UniqueConstraint("supplier_name", "dataset_name", "active", name="uq_constraint_active"),
+        # Individual indexes for filtering
         Index("idx_constraint_supplier", "supplier_name", "active"),
         Index("idx_constraint_dataset", "dataset_name", "active"),
     )

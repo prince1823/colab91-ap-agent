@@ -478,7 +478,10 @@ class ClassificationDBManager:
                         SupplierDirectMapping.dataset_name == dataset_name,
                         SupplierDirectMapping.active == True,
                     )
-                    .order_by(SupplierDirectMapping.priority.desc())
+                    .order_by(
+                        SupplierDirectMapping.priority.desc(),
+                        SupplierDirectMapping.id.desc()  # Tie-breaker for same priority
+                    )
                     .first()
                 )
                 if rule:
@@ -492,7 +495,10 @@ class ClassificationDBManager:
                     SupplierDirectMapping.dataset_name.is_(None),
                     SupplierDirectMapping.active == True,
                 )
-                .order_by(SupplierDirectMapping.priority.desc())
+                .order_by(
+                    SupplierDirectMapping.priority.desc(),
+                    SupplierDirectMapping.id.desc()  # Tie-breaker for same priority
+                )
                 .first()
             )
             return rule
@@ -526,7 +532,10 @@ class ClassificationDBManager:
                         SupplierTaxonomyConstraint.dataset_name == dataset_name,
                         SupplierTaxonomyConstraint.active == True,
                     )
-                    .order_by(SupplierTaxonomyConstraint.priority.desc())
+                    .order_by(
+                        SupplierTaxonomyConstraint.priority.desc(),
+                        SupplierTaxonomyConstraint.id.desc()  # Tie-breaker for same priority
+                    )
                     .first()
                 )
                 if constraint:
@@ -540,8 +549,121 @@ class ClassificationDBManager:
                     SupplierTaxonomyConstraint.dataset_name.is_(None),
                     SupplierTaxonomyConstraint.active == True,
                 )
-                .order_by(SupplierTaxonomyConstraint.priority.desc())
+                .order_by(
+                    SupplierTaxonomyConstraint.priority.desc(),
+                    SupplierTaxonomyConstraint.id.desc()  # Tie-breaker for same priority
+                )
                 .first()
             )
             return constraint
+
+    def _batch_get_supplier_rules(
+        self,
+        model_class,
+        supplier_names: List[str],
+        dataset_name: Optional[str] = None
+    ) -> Dict[str, Optional]:
+        """
+        Generic batch lookup for supplier rules (direct mappings or taxonomy constraints).
+        
+        Args:
+            model_class: SQLAlchemy model class (SupplierDirectMapping or SupplierTaxonomyConstraint)
+            supplier_names: List of supplier names to look up
+            dataset_name: Optional dataset name
+            
+        Returns:
+            Dict mapping supplier_name -> rule (or None if not found)
+        """
+        if not supplier_names:
+            return {}
+        
+        with self._get_session(commit=False) as session:
+            # Normalize supplier names
+            normalized_names = [str(name).strip() for name in supplier_names]
+            
+            # Build base query
+            query = session.query(model_class).filter(
+                model_class.supplier_name.in_(normalized_names),
+                model_class.active == True,
+            )
+            
+            if dataset_name:
+                # Get dataset-specific first
+                dataset_rules = query.filter(
+                    model_class.dataset_name == dataset_name
+                ).order_by(
+                    model_class.priority.desc(),
+                    model_class.id.desc()
+                ).all()
+                
+                # Get global rules for suppliers not found in dataset-specific
+                found_suppliers = {rule.supplier_name for rule in dataset_rules}
+                missing_suppliers = [name for name in normalized_names if name not in found_suppliers]
+                
+                global_rules = []
+                if missing_suppliers:
+                    global_rules = query.filter(
+                        model_class.dataset_name.is_(None)
+                    ).filter(
+                        model_class.supplier_name.in_(missing_suppliers)
+                    ).order_by(
+                        model_class.priority.desc(),
+                        model_class.id.desc()
+                    ).all()
+                
+                # Combine results (dataset-specific takes precedence)
+                result = {}
+                for rule in dataset_rules + global_rules:
+                    if rule.supplier_name not in result:  # First match wins
+                        result[rule.supplier_name] = rule
+            else:
+                # Only global rules
+                rules = query.filter(
+                    model_class.dataset_name.is_(None)
+                ).order_by(
+                    model_class.priority.desc(),
+                    model_class.id.desc()
+                ).all()
+                
+                result = {}
+                for rule in rules:
+                    if rule.supplier_name not in result:  # First match wins
+                        result[rule.supplier_name] = rule
+            
+            # Add None for suppliers not found
+            for name in normalized_names:
+                if name not in result:
+                    result[name] = None
+            
+            return result
+
+    def batch_get_supplier_direct_mappings(
+        self, supplier_names: List[str], dataset_name: Optional[str] = None
+    ) -> Dict[str, Optional[SupplierDirectMapping]]:
+        """
+        Batch lookup direct mappings for multiple suppliers.
+        
+        Args:
+            supplier_names: List of supplier names to look up
+            dataset_name: Optional dataset name
+            
+        Returns:
+            Dict mapping supplier_name -> SupplierDirectMapping (or None if not found)
+        """
+        return self._batch_get_supplier_rules(SupplierDirectMapping, supplier_names, dataset_name)
+
+    def batch_get_supplier_taxonomy_constraints(
+        self, supplier_names: List[str], dataset_name: Optional[str] = None
+    ) -> Dict[str, Optional[SupplierTaxonomyConstraint]]:
+        """
+        Batch lookup taxonomy constraints for multiple suppliers.
+        
+        Args:
+            supplier_names: List of supplier names to look up
+            dataset_name: Optional dataset name
+            
+        Returns:
+            Dict mapping supplier_name -> SupplierTaxonomyConstraint (or None if not found)
+        """
+        return self._batch_get_supplier_rules(SupplierTaxonomyConstraint, supplier_names, dataset_name)
 

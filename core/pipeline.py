@@ -31,6 +31,7 @@ from core.utils.invoice_grouping import group_transactions_by_invoice
 from core.utils.lru_cache import LRUCache
 from core.utils.invoice_config import InvoiceProcessingConfig, DEFAULT_CONFIG
 from core.utils.error_models import ClassificationError
+from core.utils.path_parsing import parse_classification_path
 from core.utils.sanitize import sanitize_invoice_key
 
 
@@ -70,6 +71,10 @@ class SpendClassificationPipeline:
         app_config = get_config()
         invoice_config = DEFAULT_CONFIG
         self._supplier_cache = LRUCache(max_size=invoice_config.supplier_cache_max_size)
+        
+        # Cache for supplier rules (direct mappings and taxonomy constraints)
+        # Smaller cache size since rules are less frequently accessed
+        self._supplier_rules_cache = LRUCache(max_size=500)
         
         # Initialize database manager if caching is enabled
         self.db_manager: Optional[ClassificationDBManager] = None
@@ -119,16 +124,29 @@ class SpendClassificationPipeline:
                     return pos, cached_result, None
                 
                 # Step 1.5: Check for direct mapping rule (100% confidence, skip LLM)
-                direct_mapping = self.db_manager.get_supplier_direct_mapping(supplier_name, dataset_name)
+                # Use cache to avoid repeated database queries
+                cache_key = f"direct_mapping:{supplier_name}:{dataset_name or 'global'}"
+                cached_mapping = self._supplier_rules_cache.get(cache_key)
+                if cached_mapping is None and self.db_manager:
+                    direct_mapping = self.db_manager.get_supplier_direct_mapping(supplier_name, dataset_name)
+                    if direct_mapping:
+                        self._supplier_rules_cache.set(cache_key, direct_mapping)
+                    else:
+                        # Cache False to avoid repeated lookups for non-existent rules
+                        self._supplier_rules_cache.set(cache_key, False)
+                        direct_mapping = None
+                else:
+                    direct_mapping = cached_mapping if cached_mapping is not False else None
+                
                 if direct_mapping:
                     # Parse classification path
-                    path_parts = direct_mapping.classification_path.split('|')
+                    path_dict = parse_classification_path(direct_mapping.classification_path)
                     result = ClassificationResult(
-                        L1=path_parts[0] if len(path_parts) > 0 else "Unknown",
-                        L2=path_parts[1] if len(path_parts) > 1 else None,
-                        L3=path_parts[2] if len(path_parts) > 2 else None,
-                        L4=path_parts[3] if len(path_parts) > 3 else None,
-                        L5=path_parts[4] if len(path_parts) > 4 else None,
+                        L1=path_dict['L1'] or "Unknown",
+                        L2=path_dict['L2'],
+                        L3=path_dict['L3'],
+                        L4=path_dict['L4'],
+                        L5=path_dict['L5'],
                         override_rule_applied=f"direct_mapping_{direct_mapping.id}",
                         reasoning=f"[Direct Mapping Rule] Supplier '{supplier_name}' mapped to {direct_mapping.classification_path}",
                     )
@@ -203,11 +221,20 @@ class SpendClassificationPipeline:
                 }
             
             # Step 2.5: Check for taxonomy constraint (replace RAG with stored list)
+            # Use cache to avoid repeated database queries
             taxonomy_constraint = None
-            if self.db_manager:
+            cache_key = f"taxonomy_constraint:{supplier_name}:{dataset_name or 'global'}"
+            cached_constraint = self._supplier_rules_cache.get(cache_key)
+            if cached_constraint is not None:
+                taxonomy_constraint = cached_constraint if cached_constraint is not False else None
+            elif self.db_manager:
                 taxonomy_constraint = self.db_manager.get_supplier_taxonomy_constraint(supplier_name, dataset_name)
                 if taxonomy_constraint:
+                    self._supplier_rules_cache.set(cache_key, taxonomy_constraint)
                     logger.info(f"Using taxonomy constraint for supplier: {supplier_name} ({len(taxonomy_constraint.allowed_taxonomy_paths)} paths)")
+                else:
+                    # Cache None to avoid repeated lookups for non-existent rules
+                    self._supplier_rules_cache.set(cache_key, False)
             
             # Step 3: Expert Classification - single-shot L1-L5 with tool-augmented validation
             try:
@@ -308,17 +335,29 @@ class SpendClassificationPipeline:
             return results, errors
 
         # Step 1: Check for direct mapping rule (100% confidence, skip LLM for all rows)
-        if self.db_manager:
+        # Use cache to avoid repeated database queries
+        cache_key = f"direct_mapping:{supplier_name}:{dataset_name or 'global'}"
+        cached_mapping = self._supplier_rules_cache.get(cache_key)
+        if cached_mapping is None and self.db_manager:
             direct_mapping = self.db_manager.get_supplier_direct_mapping(supplier_name, dataset_name)
             if direct_mapping:
+                self._supplier_rules_cache.set(cache_key, direct_mapping)
+            else:
+                # Cache False to avoid repeated lookups for non-existent rules
+                self._supplier_rules_cache.set(cache_key, False)
+                direct_mapping = None
+        else:
+            direct_mapping = cached_mapping if cached_mapping is not False else None
+        
+        if direct_mapping:
                 # Parse classification path
-                path_parts = direct_mapping.classification_path.split('|')
+                path_dict = parse_classification_path(direct_mapping.classification_path)
                 base_result = ClassificationResult(
-                    L1=path_parts[0] if len(path_parts) > 0 else "Unknown",
-                    L2=path_parts[1] if len(path_parts) > 1 else None,
-                    L3=path_parts[2] if len(path_parts) > 2 else None,
-                    L4=path_parts[3] if len(path_parts) > 3 else None,
-                    L5=path_parts[4] if len(path_parts) > 4 else None,
+                    L1=path_dict['L1'] or "Unknown",
+                    L2=path_dict['L2'],
+                    L3=path_dict['L3'],
+                    L4=path_dict['L4'],
+                    L5=path_dict['L5'],
                     override_rule_applied=f"direct_mapping_{direct_mapping.id}",
                     reasoning=f"[Direct Mapping Rule] Supplier '{supplier_name}' mapped to {direct_mapping.classification_path}",
                 )
