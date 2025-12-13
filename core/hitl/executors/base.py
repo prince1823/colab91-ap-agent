@@ -14,7 +14,8 @@ class BaseActionExecutor(ABC):
         self,
         session: Session,
         dataset_name: str,
-        action_details: Dict
+        action_details: Dict,
+        foldername: str = "default"
     ) -> None:
         """
         Execute the action.
@@ -23,6 +24,7 @@ class BaseActionExecutor(ABC):
             session: SQLAlchemy database session
             dataset_name: Dataset name
             action_details: Dictionary with action-specific details
+            foldername: Folder name (optional, default: "default") - used for storage abstraction
 
         Raises:
             ValueError: If action_details are invalid

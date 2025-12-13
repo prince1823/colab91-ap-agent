@@ -31,7 +31,15 @@ from core.hitl.service import FeedbackService
 
 router = APIRouter(prefix="/api/v1/feedback", tags=["feedback"])
 
-# Initialize feedback service instance
+# Initialize feedback service instance for read-only operations
+# Note: This instance doesn't have DatasetService, which is fine for:
+# - list_feedback_items (database queries only)
+# - get_feedback_item (database queries only)
+# - approve_feedback (database updates only)
+# - preview_affected_rows (reads CSV via CSVService, doesn't need DatasetService)
+# - delete_feedback_item (database deletion only)
+# For operations that need DatasetService (submit_feedback, apply_feedback), 
+# we create new FeedbackService instances with DatasetService dependency injection.
 _feedback_service = FeedbackService()
 
 
@@ -157,8 +165,8 @@ def create_feedback(
     try:
         csv_path = dataset_service.get_output_csv_path(request.dataset_id, request.foldername)
 
-        # Create a FeedbackService instance with the provided LM
-        feedback_service = FeedbackService(lm=lm)
+        # Create a FeedbackService instance with the provided LM and DatasetService
+        feedback_service = FeedbackService(lm=lm, dataset_service=dataset_service)
         result = feedback_service.submit_feedback(
             session=session,
             csv_path=csv_path,
@@ -239,6 +247,7 @@ def apply_feedback(
     feedback_id: int,
     request: ApplyBulkRequest,
     session: Session = Depends(get_db_session),
+    dataset_service: DatasetService = Depends(get_dataset_service),
 ):
     """
     Execute action and apply bulk corrections.
@@ -247,6 +256,7 @@ def apply_feedback(
         feedback_id: Feedback ID
         request: Request with row indices to update
         session: Database session
+        dataset_service: Dataset service dependency
 
     Returns:
         Bulk apply response
@@ -255,12 +265,14 @@ def apply_feedback(
         HTTPException: If feedback not found or in invalid state
     """
     try:
+        # Create FeedbackService with DatasetService for taxonomy updates
+        feedback_service = FeedbackService(dataset_service=dataset_service)
+        
         # First execute the action (update taxonomy/create rules)
-        _feedback_service.execute_action(session=session, feedback_id=feedback_id)
+        feedback_service.execute_action(session=session, feedback_id=feedback_id)
 
         # Then apply bulk corrections to CSV
-        dataset_service = get_dataset_service()
-        result = _feedback_service.apply_bulk_corrections(
+        result = feedback_service.apply_bulk_corrections(
             session=session,
             feedback_id=feedback_id,
             row_indices=request.row_indices,

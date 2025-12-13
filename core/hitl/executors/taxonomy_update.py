@@ -1,6 +1,6 @@
 """Executor for taxonomy and company context update actions."""
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
@@ -11,7 +11,7 @@ from core.hitl.services.taxonomy_service import TaxonomyService
 class TaxonomyUpdateExecutor(BaseActionExecutor):
     """Executor for taxonomy description and company context update actions."""
 
-    def __init__(self, taxonomy_service: TaxonomyService = None):
+    def __init__(self, taxonomy_service: Optional[TaxonomyService] = None):
         """
         Initialize taxonomy update executor.
 
@@ -24,7 +24,8 @@ class TaxonomyUpdateExecutor(BaseActionExecutor):
         self,
         session: Session,
         dataset_name: str,
-        action_details: Dict
+        action_details: Dict,
+        foldername: str = "default"
     ) -> None:
         """
         Execute a taxonomy or company context update.
@@ -33,6 +34,7 @@ class TaxonomyUpdateExecutor(BaseActionExecutor):
             session: SQLAlchemy session (not used for taxonomy updates, but required by interface)
             dataset_name: Dataset name
             action_details: Dictionary with action-specific details
+            foldername: Folder name (default: "default")
 
         Raises:
             ValueError: If action type is not recognized
@@ -44,7 +46,8 @@ class TaxonomyUpdateExecutor(BaseActionExecutor):
             proposed_value = action_details['proposed_value']
             self.taxonomy_service.update_company_context(
                 dataset_name,
-                {field_name: proposed_value}
+                {field_name: proposed_value},
+                foldername=foldername
             )
         elif 'taxonomy_path' in action_details:
             # Taxonomy description update
@@ -52,7 +55,8 @@ class TaxonomyUpdateExecutor(BaseActionExecutor):
             proposed_description = action_details['proposed_description']
             self.taxonomy_service.update_taxonomy_description(
                 dataset_name,
-                {taxonomy_path: proposed_description}
+                {taxonomy_path: proposed_description},
+                foldername=foldername
             )
         else:
             raise ValueError(f"Invalid action_details for taxonomy update: {action_details}")

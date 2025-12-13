@@ -20,6 +20,7 @@ from core.llms.llm import get_llm_for_agent
 from core.utils.data.path_helpers import extract_foldername_from_path
 from core.utils.data.path_parsing import parse_path_to_updates
 from core.utils.infrastructure.mlflow import setup_mlflow_tracing
+from api.services.dataset_service import DatasetService
 
 
 class FeedbackService:
@@ -30,6 +31,7 @@ class FeedbackService:
         lm: Optional[dspy.LM] = None,
         csv_service: Optional[CSVService] = None,
         taxonomy_service: Optional[TaxonomyService] = None,
+        dataset_service: Optional[DatasetService] = None,
         enable_tracing: bool = True,
     ):
         """
@@ -39,6 +41,7 @@ class FeedbackService:
             lm: DSPy language model (if None, uses config for feedback_action agent)
             csv_service: CSVService instance (creates new if None)
             taxonomy_service: TaxonomyService instance (creates new if None)
+            dataset_service: DatasetService instance (optional, for taxonomy updates)
             enable_tracing: Whether to enable MLflow tracing (default: True)
         """
         # Setup MLflow tracing if enabled
@@ -47,7 +50,13 @@ class FeedbackService:
 
         self.lm = lm or get_llm_for_agent("feedback_action")
         self.csv_service = csv_service or CSVService()
-        self.taxonomy_service = taxonomy_service or TaxonomyService()
+        self.dataset_service = dataset_service
+        
+        # Initialize taxonomy service with dataset_service if available
+        if taxonomy_service:
+            self.taxonomy_service = taxonomy_service
+        else:
+            self.taxonomy_service = TaxonomyService(dataset_service=dataset_service)
 
         # Initialize action executors
         self.action_executors = {
@@ -88,13 +97,16 @@ class FeedbackService:
         # Get original classification
         original_path = f"{transaction.get('L1', '')}|{transaction.get('L2', '')}|{transaction.get('L3', '')}|{transaction.get('L4', '')}"
 
-        # 2. Load taxonomy YAML
-        taxonomy = self.taxonomy_service.read_taxonomy(dataset_name)
+        # 2. Extract foldername from csv_path
+        foldername = extract_foldername_from_path(csv_path)
+
+        # 3. Load taxonomy YAML (using DatasetService if available)
+        taxonomy = self.taxonomy_service.read_taxonomy(dataset_name, foldername)
         taxonomy_structure = taxonomy.get('taxonomy', [])
         taxonomy_descriptions = taxonomy.get('taxonomy_descriptions', {})
         company_context = taxonomy.get('company_context', {})
 
-        # 3. Call FeedbackAction agent
+        # 4. Call FeedbackAction agent
         with dspy.context(lm=self.lm):
             agent = FeedbackAction()
             result = agent.forward(
@@ -111,11 +123,8 @@ class FeedbackService:
         action_reasoning = result['action_reasoning']
         action_details = result['action_details']
 
-        # 4. Format proposal text
+        # 5. Format proposal text
         proposal_text = format_action_proposal(action_type, action_details, dataset_name)
-
-        # 5. Extract foldername from csv_path
-        foldername = extract_foldername_from_path(csv_path)
 
         # 6. Insert into user_feedback table
         feedback = UserFeedback(
@@ -201,6 +210,7 @@ class FeedbackService:
         action_type = feedback.action_type
         action_details = feedback.action_details.copy()  # Make a copy to avoid modifying original
         dataset_name = feedback.dataset_name
+        foldername = feedback.foldername or "default"
 
         # Add feedback_id to action_details for tracking (if executor supports it)
         action_details['_feedback_id'] = feedback_id
@@ -210,8 +220,8 @@ class FeedbackService:
         if not executor:
             raise ValueError(f"Unknown action type: {action_type}")
 
-        # Execute the action
-        executor.execute(session, dataset_name, action_details)
+        # Execute the action (all executors now support foldername parameter)
+        executor.execute(session, dataset_name, action_details, foldername=foldername)
 
         # Update feedback status
         feedback.status = "applied"

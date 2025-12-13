@@ -26,7 +26,8 @@ class SupplierRuleExecutor(BaseActionExecutor):
         self,
         session: Session,
         dataset_name: str,
-        action_details: Dict
+        action_details: Dict,
+        foldername: str = "default"
     ) -> None:
         """
         Create a supplier rule in the appropriate table.
