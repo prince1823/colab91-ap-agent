@@ -15,7 +15,7 @@ from api.exceptions import (
     InvalidFeedbackStateError,
     TransactionNotFoundError,
 )
-from api.routers import datasets, feedback, transactions
+from api.routers import datasets, feedback, supplier_rules, transactions
 from core.config import get_config
 
 # Configure logging
@@ -115,6 +115,7 @@ async def general_exception_handler(request: Request, exc: Exception):
 app.include_router(datasets.router)
 app.include_router(transactions.router)
 app.include_router(feedback.router)
+app.include_router(supplier_rules.router)
 
 
 @app.get("/")

@@ -118,3 +118,64 @@ class TransactionRule(Base):
     def __repr__(self):
         return f"<TransactionRule(id={self.id}, rule_name={self.rule_name}, dataset={self.dataset_name})>"
 
+
+class SupplierDirectMapping(Base):
+    """
+    Model for storing 100% confidence supplier mappings.
+    
+    When a supplier in this table is encountered, skip LLM classification entirely
+    and directly map all transactions to the specified classification path.
+    """
+
+    __tablename__ = "supplier_direct_mappings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    supplier_name = Column(String(255), nullable=False, index=True)
+    classification_path = Column(String(500), nullable=False)  # L1|L2|L3|L4|L5
+    dataset_name = Column(String(255), nullable=True, index=True)  # None = applies to all datasets
+    priority = Column(Integer, default=10, nullable=False)  # Higher priority = checked first
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    active = Column(Boolean, default=True, nullable=False)
+    created_by = Column(String(255), nullable=True)  # User who created this rule
+    notes = Column(Text, nullable=True)  # Optional notes about why this mapping exists
+
+    __table_args__ = (
+        Index("idx_direct_mapping_supplier", "supplier_name", "active"),
+        Index("idx_direct_mapping_dataset", "dataset_name", "active"),
+    )
+
+    def __repr__(self):
+        return f"<SupplierDirectMapping(id={self.id}, supplier={self.supplier_name}, path={self.classification_path})>"
+
+
+class SupplierTaxonomyConstraint(Base):
+    """
+    Model for storing supplier taxonomy constraints.
+    
+    When a supplier in this table is encountered, instead of using RAG to retrieve
+    taxonomy paths, use the stored list of allowed taxonomy paths for LLM classification.
+    This constrains the LLM to only consider these specific paths.
+    """
+
+    __tablename__ = "supplier_taxonomy_constraints"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    supplier_name = Column(String(255), nullable=False, index=True)
+    allowed_taxonomy_paths = Column(JSON, nullable=False)  # List of allowed paths: ["L1|L2|L3", "L1|L2|L4"]
+    dataset_name = Column(String(255), nullable=True, index=True)  # None = applies to all datasets
+    priority = Column(Integer, default=10, nullable=False)  # Higher priority = checked first
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    active = Column(Boolean, default=True, nullable=False)
+    created_by = Column(String(255), nullable=True)  # User who created this constraint
+    notes = Column(Text, nullable=True)  # Optional notes about why these paths are allowed
+
+    __table_args__ = (
+        Index("idx_constraint_supplier", "supplier_name", "active"),
+        Index("idx_constraint_dataset", "dataset_name", "active"),
+    )
+
+    def __repr__(self):
+        return f"<SupplierTaxonomyConstraint(id={self.id}, supplier={self.supplier_name}, paths_count={len(self.allowed_taxonomy_paths) if isinstance(self.allowed_taxonomy_paths, list) else 0})>"
+

@@ -82,7 +82,8 @@ def process_single_dataset(dataset_dir: Path):
             input_df,
             taxonomy_path=taxonomy_path,
             return_intermediate=True,
-            max_workers=4  # Enable parallel processing for better performance
+            max_workers=4,  # Enable parallel processing for better performance
+            dataset_name=dataset_name  # Pass dataset name for supplier rules lookup
         )
         elapsed_time = time.time() - start_time
         print(f"Processing time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")

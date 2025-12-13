@@ -51,3 +51,52 @@ class ApplyBulkRequest(BaseModel):
     """Request model for applying bulk corrections."""
 
     row_indices: List[int] = Field(..., description="List of row indices to update")
+
+
+# ==================== Supplier Rules Requests ====================
+
+class CreateDirectMappingRequest(BaseModel):
+    """Request model for creating a direct mapping rule."""
+
+    supplier_name: str = Field(..., description="Supplier name")
+    classification_path: str = Field(..., description="Classification path (L1|L2|L3|L4|L5)")
+    dataset_name: Optional[str] = Field(None, description="Dataset name (None = applies to all datasets)")
+    priority: int = Field(10, ge=1, le=100, description="Priority (higher = checked first)")
+    notes: Optional[str] = Field(None, description="Optional notes")
+    created_by: Optional[str] = Field(None, description="User who created this rule")
+
+
+class UpdateDirectMappingRequest(BaseModel):
+    """Request model for updating a direct mapping rule."""
+
+    classification_path: Optional[str] = Field(None, description="Classification path (L1|L2|L3|L4|L5)")
+    priority: Optional[int] = Field(None, ge=1, le=100, description="Priority (higher = checked first)")
+    active: Optional[bool] = Field(None, description="Whether the rule is active")
+    notes: Optional[str] = Field(None, description="Optional notes")
+
+
+class CreateTaxonomyConstraintRequest(BaseModel):
+    """Request model for creating a taxonomy constraint rule."""
+
+    supplier_name: str = Field(..., description="Supplier name")
+    allowed_taxonomy_paths: List[str] = Field(..., min_length=1, description="List of allowed taxonomy paths")
+    dataset_name: Optional[str] = Field(None, description="Dataset name (None = applies to all datasets)")
+    priority: int = Field(10, ge=1, le=100, description="Priority (higher = checked first)")
+    notes: Optional[str] = Field(None, description="Optional notes")
+    created_by: Optional[str] = Field(None, description="User who created this rule")
+
+
+class UpdateTaxonomyConstraintRequest(BaseModel):
+    """Request model for updating a taxonomy constraint rule."""
+
+    allowed_taxonomy_paths: Optional[List[str]] = Field(None, min_length=1, description="List of allowed taxonomy paths")
+    priority: Optional[int] = Field(None, ge=1, le=100, description="Priority (higher = checked first)")
+    active: Optional[bool] = Field(None, description="Whether the constraint is active")
+    notes: Optional[str] = Field(None, description="Optional notes")
+
+
+class UpdateTransactionRequest(BaseModel):
+    """Request model for updating a transaction classification."""
+
+    classification_path: str = Field(..., description="Updated classification path (L1|L2|L3|L4|L5)")
+    override_rule_applied: Optional[str] = Field(None, description="Optional rule identifier that was applied")

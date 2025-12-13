@@ -117,6 +117,37 @@ class SpendClassificationPipeline:
                 cached_result = self.db_manager.get_by_supplier_and_hash(supplier_name, transaction_hash, run_id=run_id)
                 if cached_result:
                     return pos, cached_result, None
+                
+                # Step 1.5: Check for direct mapping rule (100% confidence, skip LLM)
+                direct_mapping = self.db_manager.get_supplier_direct_mapping(supplier_name, dataset_name)
+                if direct_mapping:
+                    # Parse classification path
+                    path_parts = direct_mapping.classification_path.split('|')
+                    result = ClassificationResult(
+                        L1=path_parts[0] if len(path_parts) > 0 else "Unknown",
+                        L2=path_parts[1] if len(path_parts) > 1 else None,
+                        L3=path_parts[2] if len(path_parts) > 2 else None,
+                        L4=path_parts[3] if len(path_parts) > 3 else None,
+                        L5=path_parts[4] if len(path_parts) > 4 else None,
+                        override_rule_applied=f"direct_mapping_{direct_mapping.id}",
+                        reasoning=f"[Direct Mapping Rule] Supplier '{supplier_name}' mapped to {direct_mapping.classification_path}",
+                    )
+                    logger.info(f"Using direct mapping for supplier: {supplier_name} -> {direct_mapping.classification_path}")
+                    
+                    # Store result in cache
+                    if self.db_manager:
+                        transaction_hash = self.db_manager.create_transaction_hash(row_dict)
+                        self.db_manager.store_classification(
+                            supplier_name=supplier_name,
+                            transaction_hash=transaction_hash,
+                            classification_result=result,
+                            supplier_profile=None,
+                            transaction_data=row_dict,
+                            run_id=run_id,
+                            dataset_name=dataset_name,
+                        )
+                    
+                    return pos, result, None
             
             # Use pre-computed prioritization decision (context prioritization done before parallel processing)
             if not prioritization_decision:
@@ -171,6 +202,13 @@ class SpendClassificationPipeline:
                     'is_large_company': False,
                 }
             
+            # Step 2.5: Check for taxonomy constraint (replace RAG with stored list)
+            taxonomy_constraint = None
+            if self.db_manager:
+                taxonomy_constraint = self.db_manager.get_supplier_taxonomy_constraint(supplier_name, dataset_name)
+                if taxonomy_constraint:
+                    logger.info(f"Using taxonomy constraint for supplier: {supplier_name} ({len(taxonomy_constraint.allowed_taxonomy_paths)} paths)")
+            
             # Step 3: Expert Classification - single-shot L1-L5 with tool-augmented validation
             try:
                 result = self.expert_classifier.classify_with_tools(
@@ -179,6 +217,7 @@ class SpendClassificationPipeline:
                     taxonomy_yaml=taxonomy,
                     prioritization_decision=prioritization_decision,
                     dataset_name=dataset_name,
+                    taxonomy_constraint_paths=taxonomy_constraint.allowed_taxonomy_paths if taxonomy_constraint else None,
                 )
                 
                 # Validate result
@@ -268,7 +307,47 @@ class SpendClassificationPipeline:
                 errors.append(error.to_dict())
             return results, errors
 
-        # Step 1: Batch check cache for all rows in invoice
+        # Step 1: Check for direct mapping rule (100% confidence, skip LLM for all rows)
+        if self.db_manager:
+            direct_mapping = self.db_manager.get_supplier_direct_mapping(supplier_name, dataset_name)
+            if direct_mapping:
+                # Parse classification path
+                path_parts = direct_mapping.classification_path.split('|')
+                base_result = ClassificationResult(
+                    L1=path_parts[0] if len(path_parts) > 0 else "Unknown",
+                    L2=path_parts[1] if len(path_parts) > 1 else None,
+                    L3=path_parts[2] if len(path_parts) > 2 else None,
+                    L4=path_parts[3] if len(path_parts) > 3 else None,
+                    L5=path_parts[4] if len(path_parts) > 4 else None,
+                    override_rule_applied=f"direct_mapping_{direct_mapping.id}",
+                    reasoning=f"[Direct Mapping Rule] Supplier '{supplier_name}' mapped to {direct_mapping.classification_path}",
+                )
+                logger.info(f"Using direct mapping for invoice supplier: {supplier_name} -> {direct_mapping.classification_path}")
+                
+                # Apply to all uncached rows
+                batch_results = []
+                for pos, df_idx, row_dict in invoice_rows:
+                    result = base_result  # Same result for all rows
+                    results[pos] = result
+                    batch_results.append({
+                        'pos': pos,
+                        'df_idx': df_idx,
+                        'row_dict': row_dict,
+                        'result': result,
+                    })
+                
+                # Batch store all results
+                if self.db_manager:
+                    self.db_manager.batch_store_classifications(
+                        supplier_name=supplier_name,
+                        batch_results=batch_results,
+                        run_id=run_id,
+                        dataset_name=dataset_name,
+                    )
+                
+                return results, errors, None
+
+        # Step 1.5: Batch check cache for all rows in invoice
         uncached_rows = []
         if self.db_manager:
             # Batch create hashes and look up all at once
@@ -385,12 +464,20 @@ class SpendClassificationPipeline:
 
         # Step 4: Invoice-level Classification
         try:
+            # Check for taxonomy constraint (replace RAG with stored list)
+            taxonomy_constraint = None
+            if self.db_manager:
+                taxonomy_constraint = self.db_manager.get_supplier_taxonomy_constraint(supplier_name, dataset_name)
+                if taxonomy_constraint:
+                    logger.info(f"Using taxonomy constraint for invoice supplier: {supplier_name} ({len(taxonomy_constraint.allowed_taxonomy_paths)} paths)")
+            
             classification_results = self.expert_classifier.classify_invoice(
                 supplier_profile=supplier_profile,
                 invoice_transactions=uncached_transactions,
                 taxonomy_yaml=taxonomy,
                 prioritization_decision=prioritization_decision,
                 dataset_name=dataset_name,
+                taxonomy_constraint_paths=taxonomy_constraint.allowed_taxonomy_paths if taxonomy_constraint else None,
             )
 
             # Validate results - handle partial results gracefully

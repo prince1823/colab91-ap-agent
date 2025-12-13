@@ -512,6 +512,7 @@ class ExpertClassifier:
         taxonomy_yaml: Optional[str] = None,
         prioritization_decision: Optional[PrioritizationDecision] = None,
         dataset_name: Optional[str] = None,
+        taxonomy_constraint_paths: Optional[List[str]] = None,
     ) -> ClassificationResult:
         """Classify a transaction using ChainOfThought (single-shot) with semantic pre-search."""
         taxonomy_source = taxonomy_yaml or self.taxonomy_path
@@ -526,13 +527,28 @@ class ExpertClassifier:
         supplier_info = self._format_supplier_info(supplier_profile)
         transaction_info = self._format_transaction_info(transaction_data)
         
-        # Use semantic search to find top relevant paths, grouped by L1, with similarity scores
-        l1_grouped_paths, similarity_scores = self._get_relevant_taxonomy_paths(
-            transaction_data, 
-            supplier_profile, 
-            taxonomy_list,
-            descriptions=descriptions
-        )
+        # Use taxonomy constraint if provided, otherwise use RAG
+        if taxonomy_constraint_paths:
+            # Use constraint paths instead of RAG
+            logger.debug(f"Using taxonomy constraint: {len(taxonomy_constraint_paths)} paths")
+            # Group constraint paths by L1
+            l1_grouped_paths = {}
+            for path in taxonomy_constraint_paths:
+                l1 = path.split('|')[0] if '|' in path else path
+                if l1 not in l1_grouped_paths:
+                    l1_grouped_paths[l1] = []
+                if path not in l1_grouped_paths[l1]:
+                    l1_grouped_paths[l1].append(path)
+            # No similarity scores for constraint paths (all equally valid)
+            similarity_scores = {}
+        else:
+            # Use semantic search to find top relevant paths, grouped by L1, with similarity scores
+            l1_grouped_paths, similarity_scores = self._get_relevant_taxonomy_paths(
+                transaction_data, 
+                supplier_profile, 
+                taxonomy_list,
+                descriptions=descriptions
+            )
         
         # Format taxonomy paths organized by L1 for better LLM reasoning, with similarity scores
         taxonomy_sample = self._format_taxonomy_sample_by_l1(
@@ -856,6 +872,7 @@ class ExpertClassifier:
         taxonomy_yaml: Optional[str] = None,
         prioritization_decision: Optional[PrioritizationDecision] = None,
         dataset_name: Optional[str] = None,
+        taxonomy_constraint_paths: Optional[List[str]] = None,
     ) -> List[ClassificationResult]:
         """
         Classify all transactions in an invoice together using batch processing.
@@ -884,6 +901,7 @@ class ExpertClassifier:
                 taxonomy_yaml=taxonomy_yaml,
                 prioritization_decision=prioritization_decision,
                 dataset_name=dataset_name,
+                taxonomy_constraint_paths=taxonomy_constraint_paths,
             )
             return [result]
 
@@ -933,13 +951,28 @@ class ExpertClassifier:
         if gl_descriptions:
             aggregated_data['gl_description'] = ' | '.join(gl_descriptions)
 
-        # Get invoice-level taxonomy paths using aggregated data
-        l1_grouped_paths, similarity_scores = self._get_relevant_taxonomy_paths(
-            aggregated_data,
-            supplier_profile,
-            taxonomy_list,
-            descriptions=descriptions
-        )
+        # Get invoice-level taxonomy paths using constraint or RAG
+        if taxonomy_constraint_paths:
+            # Use constraint paths instead of RAG
+            logger.debug(f"Using taxonomy constraint for invoice: {len(taxonomy_constraint_paths)} paths")
+            # Group constraint paths by L1
+            l1_grouped_paths = {}
+            for path in taxonomy_constraint_paths:
+                l1 = path.split('|')[0] if '|' in path else path
+                if l1 not in l1_grouped_paths:
+                    l1_grouped_paths[l1] = []
+                if path not in l1_grouped_paths[l1]:
+                    l1_grouped_paths[l1].append(path)
+            # No similarity scores for constraint paths
+            similarity_scores = {}
+        else:
+            # Get invoice-level taxonomy paths using aggregated data
+            l1_grouped_paths, similarity_scores = self._get_relevant_taxonomy_paths(
+                aggregated_data,
+                supplier_profile,
+                taxonomy_list,
+                descriptions=descriptions
+            )
 
         taxonomy_sample = self._format_taxonomy_sample_by_l1(
             l1_grouped_paths,

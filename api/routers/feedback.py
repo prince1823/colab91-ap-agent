@@ -1,10 +1,13 @@
 """Feedback API router."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 import dspy
 from api.dependencies import get_db_session, get_dataset_service, get_lm
+from core.database.models import UserFeedback
 from api.exceptions import (
     DatasetNotFoundError,
     FeedbackNotFoundError,
@@ -17,6 +20,9 @@ from api.models.responses import (
     ApplyBulkResponse,
     ApproveFeedbackResponse,
     ExecuteActionResponse,
+    FeedbackDetailResponse,
+    FeedbackListPaginatedResponse,
+    FeedbackListResponse,
     PreviewAffectedRowsResponse,
     SubmitFeedbackResponse,
 )
@@ -30,6 +36,110 @@ from core.hitl.feedback_service import (
 )
 
 router = APIRouter(prefix="/api/v1/feedback", tags=["feedback"])
+
+
+@router.get("", response_model=FeedbackListPaginatedResponse)
+def list_feedback(
+    status: Optional[str] = Query(None, description="Filter by status (pending, approved, applied)"),
+    dataset_id: Optional[str] = Query(None, description="Filter by dataset ID"),
+    action_type: Optional[str] = Query(None, description="Filter by action type"),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    limit: int = Query(50, ge=1, le=200, description="Number of items per page"),
+    session: Session = Depends(get_db_session),
+):
+    """
+    List all feedback items with optional filters and pagination.
+    
+    Args:
+        status: Filter by status (pending, approved, applied)
+        dataset_id: Filter by dataset ID
+        action_type: Filter by action type
+        page: Page number
+        limit: Items per page
+        session: Database session
+        
+    Returns:
+        Paginated list of feedback items
+    """
+    query = session.query(UserFeedback)
+    
+    if status:
+        query = query.filter(UserFeedback.status == status)
+    if dataset_id:
+        query = query.filter(UserFeedback.dataset_name == dataset_id)
+    if action_type:
+        query = query.filter(UserFeedback.action_type == action_type)
+    
+    # Get total count
+    total = query.count()
+    
+    # Apply pagination
+    offset = (page - 1) * limit
+    feedback_items = query.order_by(UserFeedback.created_at.desc()).offset(offset).limit(limit).all()
+    
+    items = [
+        FeedbackListResponse(
+            id=item.id,
+            dataset_id=item.dataset_name,
+            row_index=item.row_index,
+            original_classification=item.original_classification,
+            corrected_classification=item.corrected_classification,
+            action_type=item.action_type,
+            status=item.status,
+            created_at=item.created_at,
+        )
+        for item in feedback_items
+    ]
+    
+    return FeedbackListPaginatedResponse(
+        items=items,
+        total=total,
+        page=page,
+        pages=(total + limit - 1) // limit,  # Ceiling division
+        limit=limit,
+    )
+
+
+@router.get("/{feedback_id}", response_model=FeedbackDetailResponse)
+def get_feedback(
+    feedback_id: int,
+    session: Session = Depends(get_db_session),
+):
+    """
+    Get detailed information about a specific feedback item.
+    
+    Args:
+        feedback_id: Feedback ID
+        session: Database session
+        
+    Returns:
+        Detailed feedback information
+        
+    Raises:
+        HTTPException: If feedback not found
+    """
+    feedback = session.query(UserFeedback).filter(UserFeedback.id == feedback_id).first()
+    if not feedback:
+        raise HTTPException(status_code=404, detail=f"Feedback {feedback_id} not found")
+    
+    return FeedbackDetailResponse(
+        id=feedback.id,
+        dataset_id=feedback.dataset_name,
+        foldername=feedback.foldername,
+        row_index=feedback.row_index,
+        original_classification=feedback.original_classification,
+        corrected_classification=feedback.corrected_classification,
+        feedback_text=feedback.feedback_text,
+        action_type=feedback.action_type,
+        action_details=feedback.action_details,
+        action_reasoning=feedback.action_reasoning,
+        status=feedback.status,
+        proposal_text=feedback.proposal_text,
+        user_edited_text=feedback.user_edited_text,
+        created_at=feedback.created_at,
+        approved_at=feedback.approved_at,
+        applied_at=feedback.applied_at,
+    )
 
 
 @router.post("", response_model=SubmitFeedbackResponse)
@@ -173,3 +283,38 @@ def apply_feedback(
         if "must be approved" in error_str or "status" in error_str:
             raise HTTPException(status_code=400, detail=str(e))
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/{feedback_id}")
+def delete_feedback(
+    feedback_id: int,
+    session: Session = Depends(get_db_session),
+):
+    """
+    Delete/reject a feedback item.
+    
+    Args:
+        feedback_id: Feedback ID
+        session: Database session
+        
+    Returns:
+        Success message
+        
+    Raises:
+        HTTPException: If feedback not found
+    """
+    feedback = session.query(UserFeedback).filter(UserFeedback.id == feedback_id).first()
+    if not feedback:
+        raise HTTPException(status_code=404, detail=f"Feedback {feedback_id} not found")
+    
+    # Only allow deletion of pending feedback (not approved/applied)
+    if feedback.status != "pending":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot delete feedback with status '{feedback.status}'. Only pending feedback can be deleted."
+        )
+    
+    session.delete(feedback)
+    session.commit()
+    
+    return {"message": f"Feedback {feedback_id} deleted successfully"}

@@ -13,7 +13,11 @@ from typing import Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from core.agents.spend_classification.model import ClassificationResult
-from core.database.models import SupplierClassification
+from core.database.models import (
+    SupplierClassification,
+    SupplierDirectMapping,
+    SupplierTaxonomyConstraint,
+)
 from core.database.schema import get_session_factory, init_database
 
 logger = logging.getLogger(__name__)
@@ -444,4 +448,100 @@ class ClassificationDBManager:
             session.query(SupplierClassification).delete()
             logger.info(f"Cleared {count} classification cache entries from database")
             return count
+
+    def get_supplier_direct_mapping(
+        self, supplier_name: str, dataset_name: Optional[str] = None
+    ) -> Optional[SupplierDirectMapping]:
+        """
+        Get direct mapping rule for a supplier (100% confidence, skip LLM).
+        
+        Checks dataset-specific rules first, then global rules (dataset_name=None).
+        Returns highest priority active rule.
+        
+        Args:
+            supplier_name: Supplier name to look up
+            dataset_name: Optional dataset name (checks dataset-specific rules first)
+            
+        Returns:
+            SupplierDirectMapping if found, None otherwise
+        """
+        with self._get_session(commit=False) as session:
+            # Normalize supplier name
+            supplier_name = str(supplier_name).strip()
+            
+            # First check dataset-specific rule
+            if dataset_name:
+                rule = (
+                    session.query(SupplierDirectMapping)
+                    .filter(
+                        SupplierDirectMapping.supplier_name == supplier_name,
+                        SupplierDirectMapping.dataset_name == dataset_name,
+                        SupplierDirectMapping.active == True,
+                    )
+                    .order_by(SupplierDirectMapping.priority.desc())
+                    .first()
+                )
+                if rule:
+                    return rule
+            
+            # Then check global rule (dataset_name=None)
+            rule = (
+                session.query(SupplierDirectMapping)
+                .filter(
+                    SupplierDirectMapping.supplier_name == supplier_name,
+                    SupplierDirectMapping.dataset_name.is_(None),
+                    SupplierDirectMapping.active == True,
+                )
+                .order_by(SupplierDirectMapping.priority.desc())
+                .first()
+            )
+            return rule
+
+    def get_supplier_taxonomy_constraint(
+        self, supplier_name: str, dataset_name: Optional[str] = None
+    ) -> Optional[SupplierTaxonomyConstraint]:
+        """
+        Get taxonomy constraint for a supplier (replace RAG with stored list).
+        
+        Checks dataset-specific constraints first, then global constraints (dataset_name=None).
+        Returns highest priority active constraint.
+        
+        Args:
+            supplier_name: Supplier name to look up
+            dataset_name: Optional dataset name (checks dataset-specific constraints first)
+            
+        Returns:
+            SupplierTaxonomyConstraint if found, None otherwise
+        """
+        with self._get_session(commit=False) as session:
+            # Normalize supplier name
+            supplier_name = str(supplier_name).strip()
+            
+            # First check dataset-specific constraint
+            if dataset_name:
+                constraint = (
+                    session.query(SupplierTaxonomyConstraint)
+                    .filter(
+                        SupplierTaxonomyConstraint.supplier_name == supplier_name,
+                        SupplierTaxonomyConstraint.dataset_name == dataset_name,
+                        SupplierTaxonomyConstraint.active == True,
+                    )
+                    .order_by(SupplierTaxonomyConstraint.priority.desc())
+                    .first()
+                )
+                if constraint:
+                    return constraint
+            
+            # Then check global constraint (dataset_name=None)
+            constraint = (
+                session.query(SupplierTaxonomyConstraint)
+                .filter(
+                    SupplierTaxonomyConstraint.supplier_name == supplier_name,
+                    SupplierTaxonomyConstraint.dataset_name.is_(None),
+                    SupplierTaxonomyConstraint.active == True,
+                )
+                .order_by(SupplierTaxonomyConstraint.priority.desc())
+                .first()
+            )
+            return constraint
 
