@@ -591,7 +591,7 @@ Submit user feedback and get LLM-generated action proposal.
 {
   "feedback_id": 1,
   "action_type": "supplier_rule",
-  "proposal_text": "Supplier Rule\nSupplier: AWS\n...",
+  "proposal_text": "Supplier Rule\nSupplier: AWS\nRule Type: Category A (one-to-one mapping)\nClassification:\n  - it & telecom|cloud services|iaas\n\nThis rule will apply to all future transactions from this supplier.",
   "action_details": {
     "supplier_name": "AWS",
     "rule_category": "A",
@@ -599,6 +599,14 @@ Submit user feedback and get LLM-generated action proposal.
   }
 }
 ```
+
+**Action Types:**
+- `supplier_rule`: Creates supplier classification rule
+  - Category A: Direct mapping (100% confidence, single path, stored in `supplier_direct_mappings`)
+  - Category B: Taxonomy constraint (multiple allowed paths, stored in `supplier_taxonomy_constraints`)
+- `transaction_rule`: Creates transaction attribute-based rule (e.g., GL code rules)
+- `company_context`: Updates company context in taxonomy YAML
+- `taxonomy_description`: Updates taxonomy category descriptions in YAML
 
 **Example:**
 ```bash
@@ -700,12 +708,24 @@ Execute action and apply bulk corrections to CSV.
 }
 ```
 
+**What Happens:**
+- For **supplier_rule** actions:
+  - Category A: Creates/updates entry in `supplier_direct_mappings` table
+  - Category B: Creates/updates entry in `supplier_taxonomy_constraints` table
+  - Rule is immediately active and will be used by classification pipeline for future transactions
+- For **transaction_rule** actions: Creates entry in `transaction_rules` table
+- For **company_context** and **taxonomy_description** actions: Updates YAML files
+- Updates specified rows in CSV with corrected classification
+- Sets feedback status to "applied"
+
 **Example:**
 ```bash
 curl -X POST "http://localhost:8000/api/v1/feedback/1/apply" \
   -H "Content-Type: application/json" \
   -d '{"row_indices": [42, 87, 133]}'
 ```
+
+**Note:** For supplier rules, the rule is created in the database and will affect future classifications even if you don't apply bulk corrections to existing rows.
 
 ---
 
