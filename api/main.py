@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 
 # Create FastAPI app
 app = FastAPI(
-    title="HITL Backend API",
-    description="Human-in-the-Loop backend for post-classification feedback",
+    title="Spend Classification Backend API",
+    description="Backend API for spend classification, including transaction management, HITL feedback, and supplier rules",
     version="1.0.0",
 )
 
@@ -122,7 +122,7 @@ app.include_router(supplier_rules.router)
 def root():
     """Root endpoint."""
     return {
-        "message": "HITL Backend API",
+        "message": "Spend Classification Backend API",
         "version": "1.0.0",
         "docs": "/docs"
     }

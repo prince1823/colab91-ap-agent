@@ -1,4 +1,4 @@
-# HITL Backend API Documentation
+# Spend Classification Backend API Documentation
 
 ## Base URL
 ```
