@@ -1,9 +1,11 @@
 """Datasets API router."""
 
+import io
 from typing import List, Optional
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, Query
+import yaml
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
 from api.dependencies import get_dataset_service
 from api.exceptions import DatasetNotFoundError, InvalidDatasetIdError
@@ -90,16 +92,105 @@ def get_dataset(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@router.post("/datasets/upload", response_model=CreateDatasetResponse, status_code=201)
+async def create_dataset_upload(
+    dataset_id: str = Form(..., description="Dataset identifier"),
+    foldername: str = Form("default", description="Folder name (use empty string for direct dataset access)"),
+    input_csv: UploadFile = File(..., description="Input CSV file"),
+    taxonomy_yaml: UploadFile = File(..., description="Taxonomy YAML file"),
+    dataset_service: DatasetService = Depends(get_dataset_service),
+):
+    """
+    Create a new dataset by uploading CSV and YAML files.
+    
+    This endpoint accepts file uploads via multipart/form-data.
+
+    Args:
+        dataset_id: Dataset identifier
+        foldername: Folder name (default: "default", use "" for direct dataset access)
+        input_csv: Uploaded CSV file with transaction data
+        taxonomy_yaml: Uploaded YAML file with taxonomy structure
+        dataset_service: Dataset service dependency
+
+    Returns:
+        Created dataset information
+
+    Raises:
+        HTTPException: If dataset already exists or data is invalid
+    """
+    try:
+        # Validate dataset_id format
+        import re
+        if not re.match(r"^[a-zA-Z0-9_.-]+$", dataset_id):
+            raise HTTPException(
+                status_code=400,
+                detail="dataset_id can only contain alphanumeric characters, underscore, hyphen, and dot"
+            )
+        
+        # Validate foldername format
+        if foldername != "" and not re.match(r"^[a-zA-Z0-9_.-]+$", foldername):
+            raise HTTPException(
+                status_code=400,
+                detail="foldername can only contain alphanumeric characters, underscore, hyphen, and dot"
+            )
+        
+        # Validate file types
+        if not input_csv.filename or not input_csv.filename.lower().endswith('.csv'):
+            raise HTTPException(status_code=400, detail="input_csv must be a CSV file")
+        
+        if not taxonomy_yaml.filename or not taxonomy_yaml.filename.lower().endswith(('.yaml', '.yml')):
+            raise HTTPException(status_code=400, detail="taxonomy_yaml must be a YAML file")
+        
+        # Read CSV file
+        csv_content = await input_csv.read()
+        try:
+            transactions_df = pd.read_csv(io.BytesIO(csv_content))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid CSV file: {str(e)}")
+        
+        # Read YAML file
+        yaml_content = await taxonomy_yaml.read()
+        try:
+            taxonomy_data = yaml.safe_load(io.BytesIO(yaml_content))
+            if not isinstance(taxonomy_data, dict):
+                raise ValueError("Taxonomy YAML must be a dictionary")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid YAML file: {str(e)}")
+        
+        # Create dataset
+        result = dataset_service.create_dataset(
+            dataset_id=dataset_id,
+            transactions_df=transactions_df,
+            taxonomy_data=taxonomy_data,
+            foldername=foldername,
+            csv_filename="input.csv",  # Use standard filename
+        )
+
+        return CreateDatasetResponse(
+            dataset_id=result["dataset_id"],
+            foldername=result["foldername"],
+            row_count=result["row_count"],
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create dataset: {str(e)}")
+
+
 @router.post("/datasets", response_model=CreateDatasetResponse, status_code=201)
 def create_dataset(
     request: CreateDatasetRequest,
     dataset_service: DatasetService = Depends(get_dataset_service),
 ):
     """
-    Create a new dataset with transactions CSV and taxonomy YAML.
+    Create a new dataset with transactions and taxonomy provided as JSON.
+    
+    This endpoint accepts JSON data (for backward compatibility and programmatic access).
 
     Args:
-        request: Dataset creation request
+        request: Dataset creation request with transactions and taxonomy as JSON
         dataset_service: Dataset service dependency
 
     Returns:

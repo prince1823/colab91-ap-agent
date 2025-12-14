@@ -68,7 +68,8 @@ class ResearchAgent:
         if lm is None:
             lm = get_llm_for_agent("research")
         
-        dspy.configure(lm=lm)
+        # Store LM for thread-safe context usage instead of configure
+        self.lm = lm
         
         # Create DSPy predictor
         self.researcher = dspy.ChainOfThought(ResearchSignature)

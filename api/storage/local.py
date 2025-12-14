@@ -42,11 +42,14 @@ class LocalStorageBackend(StorageBackend):
         Validate foldername to prevent path traversal.
 
         Args:
-            foldername: Folder name
+            foldername: Folder name (empty string is allowed for direct dataset access)
 
         Raises:
             ValueError: If foldername contains invalid characters
         """
+        # Allow empty string for direct dataset access (datasets/innova instead of datasets/default/innova)
+        if foldername == "":
+            return
         # Only allow alphanumeric, underscore, hyphen, and dot
         if not re.match(r"^[a-zA-Z0-9_.-]+$", foldername):
             raise ValueError(f"Invalid foldername: {foldername}. Only alphanumeric, underscore, hyphen, and dot are allowed.")
@@ -68,7 +71,11 @@ class LocalStorageBackend(StorageBackend):
         self._validate_dataset_id(dataset_id)
         self._validate_foldername(foldername)
 
-        dataset_path = self.base_dir / foldername / dataset_id
+        # Handle empty foldername for direct dataset access
+        if foldername == "":
+            dataset_path = self.base_dir / dataset_id
+        else:
+            dataset_path = self.base_dir / foldername / dataset_id
 
         # Resolve to absolute path and validate it's within base_dir
         dataset_path = dataset_path.resolve()
@@ -201,7 +208,29 @@ class LocalStorageBackend(StorageBackend):
 
         datasets = []
 
-        if foldername:
+        # Handle empty foldername for direct dataset access (datasets/innova)
+        if foldername == "":
+            # List datasets directly in base_dir
+            for dataset_dir in self.base_dir.iterdir():
+                if dataset_dir.is_dir():
+                    # Find any CSV file in the directory
+                    csv_path = self._find_csv_file(dataset_dir)
+                    if csv_path:
+                        dataset_id = dataset_dir.name
+                        try:
+                            self._validate_dataset_id(dataset_id)
+                            # Get row count
+                            df = pd.read_csv(csv_path)
+                            row_count = len(df)
+                        except Exception:
+                            row_count = 0
+
+                        datasets.append({
+                            "dataset_id": dataset_id,
+                            "foldername": "",
+                            "row_count": row_count,
+                        })
+        elif foldername:
             # List datasets in specific folder
             self._validate_foldername(foldername)
             folder_path = self.base_dir / foldername

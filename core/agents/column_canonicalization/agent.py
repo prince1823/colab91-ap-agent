@@ -38,7 +38,8 @@ class ColumnCanonicalizationAgent:
         if lm is None:
             lm = get_llm_for_agent("column_canonicalization")
         
-        dspy.configure(lm=lm)
+        # Store LM for thread-safe context usage instead of configure
+        self.lm = lm
         
         # Use ChainOfThought for reasoning about column mappings
         # No tools needed - LLM can reason about column mappings directly
@@ -91,11 +92,12 @@ class ColumnCanonicalizationAgent:
         canonical_json = json.dumps(canonical_columns, indent=2)
         client_json = json.dumps(client_schema, indent=2)
         
-        # Call predictor
-        result = self.predictor(
-            client_schema=client_json,
-            canonical_columns=canonical_json,
-        )
+        # Call predictor with thread-safe context
+        with dspy.context(lm=self.lm):
+            result = self.predictor(
+                client_schema=client_json,
+                canonical_columns=canonical_json,
+            )
         
         # Parse JSON outputs
         mappings = json.loads(result.mappings.strip()) if result.mappings.strip() else {}

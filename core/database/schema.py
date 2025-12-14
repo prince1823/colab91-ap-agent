@@ -120,6 +120,22 @@ def _migrate_existing_database(engine):
                         conn.commit()
                     except Exception:
                         pass  # Index might already exist
+
+        # Check if user_feedback table exists and add foldername column if missing
+        if 'user_feedback' in inspector.get_table_names():
+            columns = [col['name'] for col in inspector.get_columns('user_feedback')]
+            
+            # Add foldername column if it doesn't exist
+            if 'foldername' not in columns:
+                with engine.connect() as conn:
+                    try:
+                        conn.execute(text("ALTER TABLE user_feedback ADD COLUMN foldername VARCHAR(255)"))
+                        # Set default value for existing rows
+                        conn.execute(text("UPDATE user_feedback SET foldername = 'default' WHERE foldername IS NULL"))
+                        conn.commit()
+                    except Exception as e:
+                        # Column might already exist or other error
+                        pass
     except Exception:
         # Table might not exist yet (new database), that's fine
         pass

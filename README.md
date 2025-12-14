@@ -647,6 +647,19 @@ This significantly speeds up processing when:
 **6. Import errors**
 - **Solution**: Make sure you've run `poetry install` to install all dependencies
 - Activate the Poetry environment: `poetry shell`
+- Always use `PYTHONPATH=.` when running scripts: `PYTHONPATH=. poetry run python <script>`
+
+**7. Thread-related errors in classification**
+- **Solution**: Reduce `max_workers` parameter (try `max_workers=1` for testing)
+- Thread issues often occur with shared state in parallel processing
+- Use `diagnose_issues.py` to check threading configuration
+- For API testing, the test script uses `max_workers=1` to avoid thread issues
+
+**8. Path resolution errors**
+- **Solution**: Always run scripts from the project root directory
+- Use `diagnose_issues.py` to verify path resolution
+- Ensure all paths are resolved to absolute paths using `Path.resolve()`
+- Check that `PYTHONPATH=.` is set when running Python scripts
 
 ### Getting Help
 
@@ -685,6 +698,19 @@ The project includes several helper scripts to simplify common tasks:
 
 - **`run_tests.sh`** - Runs all test files with proper PYTHONPATH setup
 - **`start_hitl_api.sh`** - Starts the HITL API server on port 8000
+- **`test_api_endpoints.py`** - Comprehensive API endpoint testing script
+  - Tests all endpoints in proper application flow
+  - Handles thread safety issues (uses max_workers=1 for testing)
+  - Tests canonicalization → verification → classification workflow
+  - Tests transactions, feedback, and supplier rules APIs
+  - Usage: `python test_api_endpoints.py` (requires API server running)
+- **`diagnose_issues.py`** - Diagnostic script for common issues
+  - Checks imports and module paths
+  - Verifies path resolution (absolute vs relative)
+  - Tests database setup and initialization
+  - Checks threading configuration
+  - Validates environment variables
+  - Usage: `PYTHONPATH=. poetry run python diagnose_issues.py`
 
 ### Usage Examples
 
@@ -701,6 +727,12 @@ PYTHONPATH=. poetry run python init_database.py
 
 # Start API server
 ./start_hitl_api.sh
+
+# Test API endpoints (requires server running)
+python test_api_endpoints.py
+
+# Diagnose common issues (threads, paths, database)
+PYTHONPATH=. poetry run python diagnose_issues.py
 ```
 
 ## Documentation

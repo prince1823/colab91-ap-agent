@@ -298,7 +298,7 @@ class ClassificationService:
             position_map = {idx: pos for pos, idx in enumerate(canonical_df.index)}
             error_by_pos = {}
             for error_dict in errors:
-                error = ClassificationError.from_dict(error_dict)
+                error = TransactionClassificationError.from_dict(error_dict)
                 row_idx = error.row_index
                 if row_idx is not None:
                     pos = position_map.get(row_idx)
@@ -323,7 +323,7 @@ class ClassificationService:
                 self.session.commit()
             except SQLAlchemyError as e:
                 self.session.rollback()
-                raise ClassificationServiceError(f"Failed to save classification state: {e}") from e
+                raise ClassificationError(f"Failed to save classification state: {e}") from e
 
             logger.info(f"Classification completed for {dataset_id}/{foldername}")
             return result_df
@@ -366,7 +366,7 @@ class ClassificationService:
 
         if not supplier_name:
             for pos, df_idx, row_dict in invoice_rows:
-                error = ClassificationError(
+                error = TransactionClassificationError(
                     row_index=df_idx,
                     supplier_name=None,
                     error='Missing supplier_name in all invoice rows',
@@ -458,7 +458,7 @@ class ClassificationService:
             error_msg = f"Context prioritization failed for invoice: {e}"
             logger.error(error_msg, exc_info=True)
             for pos, df_idx, row_dict in uncached_rows:
-                error = ClassificationError(
+                error = TransactionClassificationError(
                     row_index=df_idx,
                     supplier_name=supplier_name,
                     error=error_msg,
@@ -495,7 +495,7 @@ class ClassificationService:
                     error_msg = f"Supplier research failed for {supplier_name}: {e}"
                     logger.warning(error_msg)
                     for pos, df_idx, row_dict in uncached_rows:
-                        error = ClassificationError(
+                        error = TransactionClassificationError(
                             row_index=df_idx,
                             supplier_name=supplier_name,
                             error=error_msg,
@@ -539,7 +539,7 @@ class ClassificationService:
                     if i < len(classification_results):
                         results[pos] = classification_results[i]
                     else:
-                        error = ClassificationError(
+                        error = TransactionClassificationError(
                             row_index=df_idx,
                             supplier_name=supplier_name,
                             error=f"Missing classification result: {error_msg}",
@@ -552,7 +552,7 @@ class ClassificationService:
             error_msg = f"Invoice classification failed for supplier {supplier_name}: {e}"
             logger.error(error_msg, exc_info=True)
             for pos, df_idx, row_dict in uncached_rows:
-                error = ClassificationError(
+                error = TransactionClassificationError(
                     row_index=df_idx,
                     supplier_name=supplier_name,
                     error=error_msg,
@@ -568,7 +568,7 @@ class ClassificationService:
             if not result or not hasattr(result, 'L1') or not result.L1:
                 error_msg = f"Invalid classification result for row {df_idx}"
                 logger.warning(error_msg)
-                error = ClassificationError(
+                error = TransactionClassificationError(
                     row_index=df_idx,
                     supplier_name=supplier_name,
                     error=error_msg,
@@ -636,7 +636,11 @@ class ClassificationService:
         """Save classified CSV to final location."""
         config = get_config()
         datasets_dir = config.datasets_dir
-        dataset_path = datasets_dir / foldername / dataset_id
+        # Handle empty foldername for direct dataset access
+        if foldername == "":
+            dataset_path = datasets_dir / dataset_id
+        else:
+            dataset_path = datasets_dir / foldername / dataset_id
         dataset_path.mkdir(parents=True, exist_ok=True)
 
         # Save as classified.csv

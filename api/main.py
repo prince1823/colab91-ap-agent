@@ -95,10 +95,24 @@ async def invalid_feedback_state_handler(request: Request, exc: InvalidFeedbackS
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Handle request validation errors."""
-    logger.warning(f"Validation error: {exc.errors()}")
+    # Convert errors to JSON-serializable format
+    errors = exc.errors()
+    # Ensure all error values are strings
+    serializable_errors = []
+    for error in errors:
+        serializable_error = {}
+        for key, value in error.items():
+            # Convert non-serializable values to strings
+            if isinstance(value, (ValueError, Exception)):
+                serializable_error[key] = str(value)
+            else:
+                serializable_error[key] = value
+        serializable_errors.append(serializable_error)
+    
+    logger.warning(f"Validation error: {serializable_errors}")
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": exc.errors(), "error_type": "ValidationError"},
+        content={"detail": serializable_errors, "error_type": "ValidationError"},
     )
 
 
@@ -106,9 +120,11 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def general_exception_handler(request: Request, exc: Exception):
     """Handle unexpected errors."""
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    # Ensure error detail is always a string, not an exception object
+    error_detail = str(exc) if exc else "Internal server error"
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"detail": "Internal server error", "error_type": "InternalServerError"},
+        content={"detail": error_detail, "error_type": type(exc).__name__},
     )
 
 # Include routers

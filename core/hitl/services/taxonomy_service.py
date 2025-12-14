@@ -122,32 +122,31 @@ class TaxonomyService:
         """
         if self.dataset_service:
             try:
-                return self.dataset_service.get_dataset_taxonomy(dataset_name, foldername)
-            except DatasetNotFoundError:
-                # Fallback to old path if dataset not found in new system
-                logger.warning(
-                    f"Dataset '{dataset_name}' not found in storage, falling back to legacy path 'taxonomies/{dataset_name}.yaml'"
-                )
+                taxonomy = self.dataset_service.get_dataset_taxonomy(dataset_name, foldername)
+                logger.info(f"Successfully loaded taxonomy for '{dataset_name}' in folder '{foldername}' from DatasetService")
+                return taxonomy
+            except DatasetNotFoundError as e:
+                # No fallback - taxonomy must be in dataset directory
+                raise FileNotFoundError(
+                    f"Taxonomy file not found for dataset '{dataset_name}' in folder '{foldername}'. "
+                    f"Expected taxonomy.yaml in the same directory as input.csv (datasets/{dataset_name}/taxonomy.yaml). "
+                    f"Error: {e}"
+                ) from e
             except Exception as e:
-                # Log unexpected errors but still try fallback
+                # Log and re-raise unexpected errors
                 logger.error(
-                    f"Error reading taxonomy from DatasetService for '{dataset_name}': {e}. "
-                    f"Falling back to legacy path.",
+                    f"Error reading taxonomy from DatasetService for '{dataset_name}' in folder '{foldername}': {type(e).__name__}: {e}.",
                     exc_info=True
                 )
+                raise FileNotFoundError(
+                    f"Failed to load taxonomy for dataset '{dataset_name}' in folder '{foldername}': {e}"
+                ) from e
 
-        # Fallback to old path-based approach
-        taxonomy_path = self.taxonomy_base_path / f"{dataset_name}.yaml"
-        if not taxonomy_path.exists():
-            raise FileNotFoundError(
-                f"Taxonomy file not found: {taxonomy_path}. "
-                f"Tried DatasetService first, then legacy path."
-            )
-
-        with open(taxonomy_path, 'r') as f:
-            taxonomy = yaml.safe_load(f)
-
-        return taxonomy
+        # If no DatasetService, raise error (we require DatasetService)
+        raise ValueError(
+            f"TaxonomyService requires DatasetService to load taxonomy. "
+            f"Taxonomy files are stored in dataset directories (datasets/{dataset_name}/taxonomy.yaml), not in taxonomies/ folder."
+        )
 
     def update_company_context(
         self,

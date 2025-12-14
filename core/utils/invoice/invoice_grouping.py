@@ -12,18 +12,32 @@ logger = logging.getLogger(__name__)
 def validate_grouping_columns(canonical_df: pd.DataFrame, grouping_columns: List[str]) -> None:
     """
     Validate that all required grouping columns exist in the DataFrame.
+    
+    Note: Some columns like 'company' and 'creation_date' are optional for invoice grouping.
+    If they're missing, we'll filter them out and use only available columns.
 
     Args:
         canonical_df: DataFrame to validate
         grouping_columns: List of required column names
 
     Raises:
-        ValueError: If any required columns are missing
+        ValueError: If critical columns are missing (supplier_name, invoice_date)
     """
-    missing_cols = [col for col in grouping_columns if col not in canonical_df.columns]
-    if missing_cols:
+    # Critical columns that must exist
+    critical_columns = ['supplier_name', 'invoice_date']
+    missing_critical = [col for col in critical_columns if col not in canonical_df.columns]
+    if missing_critical:
         raise ValueError(
-            f"Missing required grouping columns: {missing_cols}. "
+            f"Missing critical grouping columns: {missing_critical}. "
+            f"Available columns: {list(canonical_df.columns)}"
+        )
+    
+    # Optional columns - log if missing but don't fail
+    optional_columns = ['company', 'creation_date']
+    missing_optional = [col for col in optional_columns if col in grouping_columns and col not in canonical_df.columns]
+    if missing_optional:
+        logger.warning(
+            f"Optional grouping columns missing (will be skipped): {missing_optional}. "
             f"Available columns: {list(canonical_df.columns)}"
         )
 
@@ -73,8 +87,15 @@ def group_transactions_by_invoice(
         # Use default from configuration
         grouping_columns = DEFAULT_CONFIG.default_grouping_columns
 
-    # Validate that all required columns exist
+    # Validate that critical columns exist, and filter out missing optional columns
     validate_grouping_columns(canonical_df, grouping_columns)
+    
+    # Filter out any grouping columns that don't exist in the DataFrame
+    available_grouping_columns = [col for col in grouping_columns if col in canonical_df.columns]
+    if len(available_grouping_columns) < len(grouping_columns):
+        missing = set(grouping_columns) - set(available_grouping_columns)
+        logger.info(f"Using available grouping columns: {available_grouping_columns} (skipped missing: {missing})")
+    grouping_columns = available_grouping_columns
 
     invoices = {}
 

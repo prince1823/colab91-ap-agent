@@ -45,7 +45,8 @@ class ContextPrioritizationAgent:
         if lm is None:
             lm = get_llm_for_agent("context_prioritization")
         
-        dspy.configure(lm=lm)
+        # Store LM for thread-safe context usage instead of configure
+        self.lm = lm
         
         # Create DSPy predictor
         self.decision_agent = dspy.ChainOfThought(ContextPrioritizationSignature)
@@ -498,9 +499,10 @@ class ContextPrioritizationAgent:
         Returns:
             Prioritization decision from LLM
         """
-        return self.decision_agent(
-            transaction_data=transaction_data,
-            supplier_name=supplier_name,
-            supplier_profile=supplier_profile,
-        )
+        with dspy.context(lm=self.lm):
+            return self.decision_agent(
+                transaction_data=transaction_data,
+                supplier_name=supplier_name,
+                supplier_profile=supplier_profile,
+            )
 

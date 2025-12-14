@@ -8,7 +8,7 @@ import json
 import logging
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -562,7 +562,7 @@ class ClassificationDBManager:
         model_class,
         supplier_names: List[str],
         dataset_name: Optional[str] = None
-    ) -> Dict[str, Optional]:
+    ) -> Dict[str, Optional[Any]]:
         """
         Generic batch lookup for supplier rules (direct mappings or taxonomy constraints).
         

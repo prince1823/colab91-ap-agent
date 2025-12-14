@@ -38,7 +38,8 @@ class ExpertClassifier:
         if lm is None:
             lm = get_llm_for_agent("spend_classification")
 
-        dspy.configure(lm=lm)
+        # Store LM for thread-safe context usage instead of configure
+        self.lm = lm
 
         self.taxonomy_path = str(taxonomy_path) if taxonomy_path else None
         self._taxonomy_cache: Dict[str, Dict] = {}
@@ -573,13 +574,14 @@ class ExpertClassifier:
             self._classifier = dspy.ChainOfThought(SpendClassificationSignature)
 
         try:
-            result = self._classifier(
-                supplier_info=supplier_info,
-                transaction_info=transaction_info,
-                taxonomy_sample=taxonomy_sample,
-                prioritization=prioritization,
-                domain_context=domain_context,
-            )
+            with dspy.context(lm=self.lm):
+                result = self._classifier(
+                    supplier_info=supplier_info,
+                    transaction_info=transaction_info,
+                    taxonomy_sample=taxonomy_sample,
+                    prioritization=prioritization,
+                    domain_context=domain_context,
+                )
             classification_path = str(result.classification_path or '').strip()
             confidence = str(getattr(result, 'confidence', 'medium') or 'medium').lower()
             reasoning = str(getattr(result, 'reasoning', '') or '')
@@ -1245,10 +1247,11 @@ class ExpertClassifier:
         if self._classifier is None:
             self._classifier = dspy.ChainOfThought(SpendClassificationSignature)
         
-        return self._classifier(
-            supplier_info=supplier_info,
-            transaction_info=transaction_info,
-            taxonomy_sample=taxonomy_sample,
-            prioritization=prioritization,
-            domain_context=domain_context,
-        )
+        with dspy.context(lm=self.lm):
+            return self._classifier(
+                supplier_info=supplier_info,
+                transaction_info=transaction_info,
+                taxonomy_sample=taxonomy_sample,
+                prioritization=prioritization,
+                domain_context=domain_context,
+            )

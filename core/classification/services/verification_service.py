@@ -112,7 +112,17 @@ class VerificationService:
                 f"Expected one of: {valid_states}"
             )
 
-        # Validate state transition
+        # If status is CANONICALIZED and auto_approve, transition through AWAITING_VERIFICATION first
+        if state.status == WorkflowStatus.CANONICALIZED and auto_approve:
+            try:
+                validate_state_transition(state.status, WorkflowStatus.AWAITING_VERIFICATION)
+                state.status = WorkflowStatus.AWAITING_VERIFICATION
+                self.session.commit()
+            except SQLAlchemyError as e:
+                self.session.rollback()
+                raise VerificationError(f"Failed to update state: {e}") from e
+
+        # Validate state transition to VERIFIED
         try:
             validate_state_transition(state.status, WorkflowStatus.VERIFIED)
         except InvalidStateTransitionError as e:

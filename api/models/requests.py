@@ -33,6 +33,9 @@ class SubmitFeedbackRequest(BaseModel):
     @classmethod
     def validate_foldername(cls, v: str) -> str:
         """Validate foldername format."""
+        # Allow empty string for direct dataset access (datasets/innova instead of datasets/default/innova)
+        if v == "":
+            return v
         if not re.match(r"^[a-zA-Z0-9_.-]+$", v):
             raise ValueError("foldername can only contain alphanumeric characters, underscore, hyphen, and dot")
         return v
@@ -174,6 +177,9 @@ class CreateDatasetRequest(BaseModel):
     @classmethod
     def validate_foldername(cls, v: str) -> str:
         """Validate foldername format."""
+        # Allow empty string for direct dataset access (datasets/innova instead of datasets/default/innova)
+        if v == "":
+            return v
         if not re.match(r"^[a-zA-Z0-9_.-]+$", v):
             raise ValueError("foldername can only contain alphanumeric characters, underscore, hyphen, and dot")
         return v

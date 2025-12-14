@@ -100,7 +100,7 @@ class CanonicalizationService:
                 state.status = WorkflowStatus.CANONICALIZED
                 state.canonicalization_result = {
                     'mappings': mapping_result.mappings,
-                    'unmapped_columns': mapping_result.unmapped_columns,
+                    'unmapped_columns': mapping_result.unmapped_client_columns,
                     'validation_passed': mapping_result.validation_passed,
                     'validation_errors': mapping_result.validation_errors,
                 }
@@ -129,7 +129,6 @@ class CanonicalizationService:
     ) -> DatasetProcessingState:
         """Get or create processing state with database locking to prevent race conditions."""
         from sqlalchemy import select
-        from sqlalchemy.orm import with_for_update
         
         # Use SELECT FOR UPDATE to lock the row and prevent concurrent modifications
         state = self.session.query(DatasetProcessingState).filter(

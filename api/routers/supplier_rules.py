@@ -206,12 +206,45 @@ def delete_direct_mapping(
             session.delete(mapping)
         else:
             logger.info(f"Soft deleting direct mapping {mapping_id} for supplier: {supplier_name}")
-            mapping.active = False
+            # Check if there's already an inactive row to avoid unique constraint violation
+            # If so, just hard delete this one
+            existing_inactive = (
+                session.query(SupplierDirectMapping)
+                .filter(
+                    SupplierDirectMapping.supplier_name == mapping.supplier_name,
+                    SupplierDirectMapping.dataset_name == mapping.dataset_name,
+                    SupplierDirectMapping.active == False,
+                    SupplierDirectMapping.id != mapping_id
+                )
+                .first()
+            )
+            if existing_inactive:
+                # Already have an inactive row, so hard delete this one
+                logger.info(f"Found existing inactive mapping, hard deleting {mapping_id}")
+                session.delete(mapping)
+            else:
+                mapping.active = False
         
         session.commit()
         return {"message": "Direct mapping deleted successfully"}
     except HTTPException:
         raise
+    except IntegrityError as e:
+        session.rollback()
+        # If soft delete fails due to unique constraint, try hard delete instead
+        logger.warning(f"Soft delete failed due to constraint, trying hard delete: {e}")
+        try:
+            mapping = session.query(SupplierDirectMapping).filter(SupplierDirectMapping.id == mapping_id).first()
+            if mapping:
+                session.delete(mapping)
+                session.commit()
+                return {"message": "Direct mapping deleted successfully"}
+        except:
+            pass
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete direct mapping: {str(e)}"
+        )
     except Exception as e:
         session.rollback()
         logger.error(f"Error deleting direct mapping {mapping_id}: {e}", exc_info=True)
@@ -395,12 +428,45 @@ def delete_taxonomy_constraint(
             session.delete(constraint)
         else:
             logger.info(f"Soft deleting taxonomy constraint {constraint_id} for supplier: {supplier_name}")
-            constraint.active = False
+            # Check if there's already an inactive row to avoid unique constraint violation
+            # If so, just hard delete this one
+            existing_inactive = (
+                session.query(SupplierTaxonomyConstraint)
+                .filter(
+                    SupplierTaxonomyConstraint.supplier_name == constraint.supplier_name,
+                    SupplierTaxonomyConstraint.dataset_name == constraint.dataset_name,
+                    SupplierTaxonomyConstraint.active == False,
+                    SupplierTaxonomyConstraint.id != constraint_id
+                )
+                .first()
+            )
+            if existing_inactive:
+                # Already have an inactive row, so hard delete this one
+                logger.info(f"Found existing inactive constraint, hard deleting {constraint_id}")
+                session.delete(constraint)
+            else:
+                constraint.active = False
         
         session.commit()
         return {"message": "Taxonomy constraint deleted successfully"}
     except HTTPException:
         raise
+    except IntegrityError as e:
+        session.rollback()
+        # If soft delete fails due to unique constraint, try hard delete instead
+        logger.warning(f"Soft delete failed due to constraint, trying hard delete: {e}")
+        try:
+            constraint = session.query(SupplierTaxonomyConstraint).filter(SupplierTaxonomyConstraint.id == constraint_id).first()
+            if constraint:
+                session.delete(constraint)
+                session.commit()
+                return {"message": "Taxonomy constraint deleted successfully"}
+        except:
+            pass
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete taxonomy constraint: {str(e)}"
+        )
     except Exception as e:
         session.rollback()
         logger.error(f"Error deleting taxonomy constraint {constraint_id}: {e}", exc_info=True)

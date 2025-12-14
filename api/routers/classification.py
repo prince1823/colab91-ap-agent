@@ -1,9 +1,12 @@
 """Classification workflow API router."""
 
+import logging
 from typing import Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from api.dependencies import get_db_session, get_dataset_service
 from api.exceptions import DatasetNotFoundError, InvalidDatasetIdError
@@ -37,11 +40,9 @@ def get_workflow_manager(
 ) -> WorkflowManager:
     """Get workflow manager instance."""
     # Note: Taxonomy path will be determined per-dataset when needed
-    # For workflow manager, we use a placeholder that will be overridden
-    # The actual taxonomy is loaded from dataset in each service
-    config = get_config()
-    taxonomy_path = "taxonomies/default.yaml"  # Placeholder, actual path loaded per-dataset
-    return WorkflowManager(session, dataset_service, taxonomy_path)
+    # For workflow manager, we use None as placeholder - actual taxonomy is loaded from dataset directory
+    # The actual taxonomy path is resolved per-dataset in each service (canonicalization, classification)
+    return WorkflowManager(session, dataset_service, taxonomy_path=None)
 
 
 @router.post("/datasets/{dataset_id}/canonicalize", response_model=Dict)
@@ -180,20 +181,33 @@ def start_classification(
         HTTPException: If dataset not found or not verified
     """
     try:
-        # Get taxonomy from dataset service
+        # Get taxonomy path directly from dataset directory (same level as input.csv)
         try:
-            taxonomy_data = dataset_service.read_yaml(dataset_id, foldername)
-            # Save taxonomy to temp file for classification service
-            import tempfile
-            import yaml
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-                yaml.dump(taxonomy_data, f)
-                taxonomy_path = f.name
+            # Get the actual taxonomy file path from storage
+            if hasattr(dataset_service.storage, '_get_yaml_path'):
+                taxonomy_path = str(dataset_service.storage._get_yaml_path(dataset_id, foldername))
+            else:
+                # Fallback: construct path manually
+                from pathlib import Path
+                config = get_config()
+                datasets_dir = config.datasets_dir
+                if foldername == "":
+                    taxonomy_path = str(datasets_dir / dataset_id / "taxonomy.yaml")
+                else:
+                    taxonomy_path = str(datasets_dir / foldername / dataset_id / "taxonomy.yaml")
+            
+            # Verify the file exists
+            taxonomy_file = Path(taxonomy_path)
+            if not taxonomy_file.exists():
+                raise FileNotFoundError(f"Taxonomy file not found: {taxonomy_path}")
         except Exception as e:
-            # Fallback to default if dataset doesn't have taxonomy
-            logger.warning(f"Could not load taxonomy from dataset {dataset_id}: {e}. Using default.")
-            config = get_config()
-            taxonomy_path = "taxonomies/default.yaml"
+            # No fallback - taxonomy must exist in dataset directory
+            logger.error(f"Could not load taxonomy from dataset {dataset_id}: {e}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Taxonomy file not found for dataset '{dataset_id}' in folder '{foldername}'. "
+                       f"Expected taxonomy.yaml in the same directory as input.csv."
+            )
         
         classification_service = ClassificationService(
             session, dataset_service, taxonomy_path

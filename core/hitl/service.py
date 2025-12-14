@@ -94,6 +94,27 @@ class FeedbackService:
         if not transaction:
             raise ValueError(f"Transaction not found at row index {row_index}")
 
+        # Convert transaction to JSON-serializable format (handle Timestamp/datetime objects)
+        import json
+        def make_serializable(obj):
+            """Recursively convert non-serializable objects to strings."""
+            if isinstance(obj, dict):
+                return {k: make_serializable(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [make_serializable(item) for item in obj]
+            elif hasattr(obj, 'isoformat'):  # datetime, Timestamp, etc.
+                return obj.isoformat()
+            elif hasattr(obj, 'item'):  # numpy types
+                return obj.item()
+            else:
+                try:
+                    json.dumps(obj)  # Test if serializable
+                    return obj
+                except (TypeError, ValueError):
+                    return str(obj)
+        
+        transaction = make_serializable(transaction)
+
         # Get original classification
         original_path = f"{transaction.get('L1', '')}|{transaction.get('L2', '')}|{transaction.get('L3', '')}|{transaction.get('L4', '')}"
 
@@ -122,6 +143,24 @@ class FeedbackService:
         action_type = result['action_type']
         action_reasoning = result['action_reasoning']
         action_details = result['action_details']
+
+        # Ensure action_details is JSON-serializable (convert any Timestamp/datetime objects)
+        import json
+        try:
+            # Test serialization and convert if needed
+            json.dumps(action_details)
+        except (TypeError, ValueError):
+            # Convert non-serializable objects to strings
+            def make_serializable(obj):
+                if isinstance(obj, dict):
+                    return {k: make_serializable(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [make_serializable(item) for item in obj]
+                elif hasattr(obj, 'isoformat'):  # datetime, Timestamp, etc.
+                    return obj.isoformat()
+                else:
+                    return str(obj)
+            action_details = make_serializable(action_details)
 
         # 5. Format proposal text
         proposal_text = format_action_proposal(action_type, action_details, dataset_name)

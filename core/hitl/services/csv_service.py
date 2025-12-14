@@ -85,7 +85,29 @@ class CSVService:
         if result_df.empty:
             return None
 
-        return result_df.iloc[0].to_dict()
+        # Convert to dict and make JSON-serializable (handle Timestamp/datetime objects)
+        row_dict = result_df.iloc[0].to_dict()
+        
+        # Convert pandas Timestamp and other non-serializable types
+        def make_serializable(obj):
+            """Recursively convert non-serializable objects to strings."""
+            if isinstance(obj, dict):
+                return {k: make_serializable(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [make_serializable(item) for item in obj]
+            elif hasattr(obj, 'isoformat'):  # datetime, Timestamp, etc.
+                return obj.isoformat()
+            elif hasattr(obj, 'item'):  # numpy types
+                return obj.item()
+            else:
+                try:
+                    import json
+                    json.dumps(obj)  # Test if serializable
+                    return obj
+                except (TypeError, ValueError):
+                    return str(obj)
+        
+        return make_serializable(row_dict)
 
     def list_available_datasets(self) -> List[Dict]:
         """

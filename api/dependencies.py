@@ -47,15 +47,10 @@ def get_lm() -> dspy.LM:
     Returns:
         DSPy language model instance
     """
-    config = get_config()
-
-    # Configure DSPy LM based on settings
-    if config.spend_classification_llm == "anthropic":
-        lm = dspy.Claude(model="claude-sonnet-4-20250514", api_key=config.anthropic.api_key)
-    else:
-        lm = dspy.OpenAI(model="gpt-4", api_key=config.openai.api_key)
-
-    return lm
+    from core.llms.llm import get_llm_for_agent
+    
+    # Use the LLM factory which handles both OpenAI and Anthropic
+    return get_llm_for_agent("spend_classification")
 
 
 def get_dataset_service() -> DatasetService:

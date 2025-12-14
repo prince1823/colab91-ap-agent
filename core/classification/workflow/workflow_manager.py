@@ -1,13 +1,8 @@
 """Workflow manager for orchestrating classification stages."""
 
 import logging
+from pathlib import Path
 from typing import Dict, Optional
-
-from sqlalchemy.orm import Session
-
-import tempfile
-import yaml
-from typing import Dict
 
 from sqlalchemy.orm import Session
 
@@ -32,7 +27,7 @@ class WorkflowManager:
         self,
         session: Session,
         dataset_service: DatasetService,
-        taxonomy_path: str
+        taxonomy_path: Optional[str] = None
     ):
         """
         Initialize workflow manager.
@@ -40,7 +35,7 @@ class WorkflowManager:
         Args:
             session: SQLAlchemy database session
             dataset_service: Dataset service
-            taxonomy_path: Path to taxonomy YAML file
+            taxonomy_path: Optional path to taxonomy YAML file (resolved per-dataset when needed)
         """
         self.session = session
         self.dataset_service = dataset_service
@@ -48,9 +43,9 @@ class WorkflowManager:
 
         self.canonicalization_service = CanonicalizationService(session, dataset_service)
         self.verification_service = VerificationService(session)
-        self.classification_service = ClassificationService(
-            session, dataset_service, taxonomy_path
-        )
+        # Classification service will be created with dataset-specific taxonomy path when needed
+        # For now, pass None - it will be resolved in the classification endpoint
+        self.classification_service = None
 
     def start_canonicalization(
         self, dataset_id: str, foldername: str = "default"
@@ -75,7 +70,7 @@ class WorkflowManager:
             "status": WorkflowStatus.CANONICALIZED,
             "mapping_result": {
                 "mappings": mapping_result.mappings,
-                "unmapped_columns": mapping_result.unmapped_columns,
+                "unmapped_columns": mapping_result.unmapped_client_columns,
                 "validation_passed": mapping_result.validation_passed,
             }
         }
@@ -179,23 +174,42 @@ class WorkflowManager:
 
     def _get_taxonomy_path(self, dataset_id: str, foldername: str) -> str:
         """
-        Get taxonomy path from dataset or use default.
-        
+        Get taxonomy path from dataset directory (same level as input.csv).
+
         Args:
             dataset_id: Dataset identifier
             foldername: Folder name
-            
+
         Returns:
             Path to taxonomy YAML file
+
+        Raises:
+            WorkflowError: If taxonomy file not found
         """
         try:
-            taxonomy_data = self.dataset_service.read_yaml(dataset_id, foldername)
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-                yaml.dump(taxonomy_data, f)
-                return f.name
+            # Get the actual taxonomy file path from storage
+            if hasattr(self.dataset_service.storage, '_get_yaml_path'):
+                taxonomy_path = str(self.dataset_service.storage._get_yaml_path(dataset_id, foldername))
+            else:
+                # Fallback: construct path manually
+                from pathlib import Path
+                from core.config import get_config
+                config = get_config()
+                datasets_dir = config.datasets_dir
+                if foldername == "":
+                    taxonomy_path = str(datasets_dir / dataset_id / "taxonomy.yaml")
+                else:
+                    taxonomy_path = str(datasets_dir / foldername / dataset_id / "taxonomy.yaml")
+            
+            # Verify the file exists
+            taxonomy_file = Path(taxonomy_path)
+            if not taxonomy_file.exists():
+                raise FileNotFoundError(f"Taxonomy file not found: {taxonomy_path}")
+            
+            return taxonomy_path
         except Exception as e:
-            logger.warning(
-                f"Could not load taxonomy from dataset {dataset_id}: {e}. Using default."
-            )
-            return self.taxonomy_path
+            raise WorkflowError(
+                f"Could not load taxonomy from dataset {dataset_id}: {e}. "
+                f"Expected taxonomy.yaml in the same directory as input.csv."
+            ) from e
 
