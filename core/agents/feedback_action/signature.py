@@ -63,12 +63,22 @@ For taxonomy_description:
   "proposed_description": "Cloud infrastructure including compute, storage, and networking..."
 }
 
-For supplier_rule:
+For supplier_rule (Category A - single classification, supplier ALWAYS provides ONE specific service):
 {
   "supplier_name": "AWS",
   "rule_category": "A",
   "classification_paths": ["it & telecom|cloud services|iaas"]
 }
+
+For supplier_rule (Category B - multiple possible classifications, supplier provides MULTIPLE types of services):
+{
+  "supplier_name": "Microsoft",
+  "rule_category": "B",
+  "classification_paths": ["it & telecom|cloud services|saas", "it & telecom|cloud services|iaas"]
+}
+
+IMPORTANT: Choose Category A when the supplier ALWAYS provides the same single type of service (one-to-one mapping).
+Choose Category B when the supplier provides MULTIPLE types of services that require different classifications (one-to-many mapping).
 
 For transaction_rule:
 {
