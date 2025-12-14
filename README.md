@@ -17,11 +17,37 @@ The pipeline uses multi-level caching to optimize performance:
 
 ## Setup
 
-### Prerequisites
+### Quick Setup (Recommended)
+
+For automated setup, use the provided setup script:
+
+```bash
+# Run the setup script (checks prerequisites, creates directories, installs dependencies)
+./setup.sh
+
+# Validate your setup
+./validate_setup.sh
+```
+
+The setup script will:
+- ✓ Check Python version (>=3.12,<3.14)
+- ✓ Check Poetry installation
+- ✓ Create required directories (`ops/`, `data/`, `results/`, `.dspy_cache/`)
+- ✓ Create a template `.env` file in `ops/`
+- ✓ Install all dependencies via Poetry
+- ✓ Verify key dependencies
+
+**After running setup.sh**, edit `ops/.env` and add your API keys.
+
+### Manual Setup
+
+If you prefer manual setup or the script doesn't work for your environment:
+
+#### Prerequisites
 - Python >=3.12,<3.14
 - Poetry (for dependency management)
 
-### Installation
+#### Installation
 
 1. **Clone the repository** (if not already done):
 ```bash
@@ -103,7 +129,12 @@ mkdir -p data results
 
 ### Running Tests
 
-All test scripts should be run with `PYTHONPATH=.` to ensure proper module imports:
+**Option 1: Use the test runner script** (recommended):
+```bash
+./run_tests.sh
+```
+
+**Option 2: Run tests individually** with `PYTHONPATH=.` to ensure proper module imports:
 
 ```bash
 # Test column canonicalization
@@ -601,7 +632,8 @@ This significantly speeds up processing when:
 
 **3. Database errors**
 - **Solution**: Ensure the `data/` directory exists and is writable
-- The database file is created automatically if it doesn't exist
+- Initialize the database explicitly: `PYTHONPATH=. poetry run python init_database.py`
+- The database file is created automatically when needed, but explicit initialization ensures proper schema setup
 
 **4. Taxonomy file not found**
 - **Solution**: Ensure taxonomy YAML files are in the `taxonomies/` folder
@@ -621,6 +653,55 @@ This significantly speeds up processing when:
 - Check the logs: Set `LOG_LEVEL=DEBUG` in `ops/.env` for detailed logging
 - Review MLflow traces: If enabled, check MLflow UI for detailed execution traces
 - Check error messages: The pipeline stores errors in `classification_errors` attribute on the result DataFrame
+
+## Available Scripts
+
+The project includes several helper scripts to simplify common tasks:
+
+### Setup Scripts
+
+- **`setup.sh`** - Automated setup script that:
+  - Checks prerequisites (Python, Poetry)
+  - Creates required directories
+  - Creates template `.env` file
+  - Installs dependencies
+  - Verifies installation
+
+- **`validate_setup.sh`** - Validates your setup by checking:
+  - Python version
+  - Poetry installation
+  - Required directories
+  - Environment configuration
+  - Dependencies installation
+  - Taxonomy files
+
+### Development Scripts
+
+- **`init_database.py`** - Initializes the database schema and runs migrations
+  - Creates all required tables
+  - Runs migrations for existing databases
+  - Verifies database schema
+  - Usage: `PYTHONPATH=. poetry run python init_database.py`
+
+- **`run_tests.sh`** - Runs all test files with proper PYTHONPATH setup
+- **`start_hitl_api.sh`** - Starts the HITL API server on port 8000
+
+### Usage Examples
+
+```bash
+# Initial setup
+./setup.sh
+./validate_setup.sh
+
+# Initialize database (if not done during setup)
+PYTHONPATH=. poetry run python init_database.py
+
+# Run all tests
+./run_tests.sh
+
+# Start API server
+./start_hitl_api.sh
+```
 
 ## Documentation
 
