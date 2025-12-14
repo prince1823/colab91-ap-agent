@@ -112,25 +112,31 @@ class ClassificationService:
         """
         state = self._get_state(dataset_id, foldername, lock=True)
 
-        if state.status != WorkflowStatus.VERIFIED:
+        # Allow starting from VERIFIED or resuming from CLASSIFYING (for async restarts)
+        if state.status not in [WorkflowStatus.VERIFIED, WorkflowStatus.CLASSIFYING]:
             raise ClassificationError(
-                f"Dataset must be verified first. Current status: {state.status}"
+                f"Dataset must be verified before classification. Current status: {state.status}"
             )
 
-        # Validate state transition
-        try:
-            validate_state_transition(state.status, WorkflowStatus.CLASSIFYING)
-        except InvalidStateTransitionError as e:
-            raise ClassificationError(str(e)) from e
+        # If already classifying, we're resuming (don't change status or run_id)
+        if state.status == WorkflowStatus.CLASSIFYING:
+            run_id = state.run_id or str(uuid.uuid4())
+            logger.info(f"Resuming classification for {dataset_id}/{foldername} (run_id: {run_id})")
+        else:
+            # Validate state transition from VERIFIED to CLASSIFYING
+            try:
+                validate_state_transition(state.status, WorkflowStatus.CLASSIFYING)
+            except InvalidStateTransitionError as e:
+                raise ClassificationError(str(e)) from e
 
-        try:
-            state.status = WorkflowStatus.CLASSIFYING
-            run_id = str(uuid.uuid4())
-            state.run_id = run_id
-            self.session.commit()
-        except SQLAlchemyError as e:
-            self.session.rollback()
-            raise ClassificationError(f"Failed to update classification state: {e}") from e
+            try:
+                state.status = WorkflowStatus.CLASSIFYING
+                run_id = str(uuid.uuid4())
+                state.run_id = run_id
+                self.session.commit()
+            except SQLAlchemyError as e:
+                self.session.rollback()
+                raise ClassificationError(f"Failed to update classification state: {e}") from e
 
         try:
             taxonomy = taxonomy_path or self.taxonomy_path
@@ -168,6 +174,17 @@ class ClassificationService:
 
             logger.info(f"Processing {len(invoices)} invoices with {len(canonical_df)} total rows (max_workers={max_workers})")
 
+            # Initialize progress tracking
+            total_invoices = len(invoices)
+            try:
+                state.progress_invoices_total = total_invoices
+                state.progress_invoices_processed = 0
+                state.progress_percentage = 0
+                self.session.commit()
+            except SQLAlchemyError as e:
+                self.session.rollback()
+                logger.warning(f"Failed to initialize progress tracking: {e}")
+
             # Process invoices in parallel if max_workers > 1
             if max_workers > 1 and len(invoices) > 1:
                 invoice_items = list(invoices.items())
@@ -204,8 +221,18 @@ class ClassificationService:
 
                             errors.extend(invoice_errors)
 
+                            # Update progress tracking
+                            percentage = int((completed / total_invoices) * 100) if total_invoices > 0 else 0
+                            try:
+                                state.progress_invoices_processed = completed
+                                state.progress_percentage = percentage
+                                self.session.commit()
+                            except SQLAlchemyError as e:
+                                self.session.rollback()
+                                logger.warning(f"Failed to update progress: {e}")
+
                             if completed % 10 == 0 or completed == len(invoices):
-                                logger.info(f"Progress: {completed}/{len(invoices)} invoices completed")
+                                logger.info(f"Progress: {completed}/{len(invoices)} invoices completed ({percentage}%)")
                         except Exception as e:
                             error_msg = f"Invoice {invoice_key} processing failed: {e}"
                             logger.error(error_msg, exc_info=True)
@@ -237,6 +264,16 @@ class ClassificationService:
                         classification_results[pos] = result
 
                     errors.extend(invoice_errors)
+                    
+                    # Update progress tracking
+                    percentage = int((idx / total_invoices) * 100) if total_invoices > 0 else 0
+                    try:
+                        state.progress_invoices_processed = idx
+                        state.progress_percentage = percentage
+                        self.session.commit()
+                    except SQLAlchemyError as e:
+                        self.session.rollback()
+                        logger.warning(f"Failed to update progress: {e}")
 
             # 4. Build result DataFrame
             result_df = canonical_df.copy()

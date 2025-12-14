@@ -1,8 +1,10 @@
 """Classification workflow API router."""
 
 import logging
+import threading
 from typing import Dict, Optional
 
+from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -156,6 +158,64 @@ def approve_canonicalization(
         raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
 
 
+def _run_classification_in_background(
+    dataset_id: str,
+    foldername: str,
+    taxonomy_path: str,
+    max_workers: int,
+    db_path: str
+):
+    """
+    Run classification in a background thread.
+    
+    This function runs in a separate thread and creates its own database session.
+    """
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy import create_engine
+    from pathlib import Path
+    from api.services.dataset_service import DatasetService
+    from core.classification.services.classification_service import ClassificationService
+    from core.database.models import DatasetProcessingState
+    
+    # Create a new database session for this thread
+    engine = create_engine(f"sqlite:///{db_path}")
+    SessionLocal = sessionmaker(bind=engine)
+    session = SessionLocal()
+    
+    try:
+        # Verify taxonomy path exists
+        if not Path(taxonomy_path).exists():
+            raise FileNotFoundError(f"Taxonomy file not found: {taxonomy_path}")
+        
+        dataset_service = DatasetService()
+        classification_service = ClassificationService(
+            session, dataset_service, taxonomy_path
+        )
+        
+        logger.info(f"Starting background classification for {dataset_id}/{foldername}")
+        result_df = classification_service.classify_dataset(
+            dataset_id, foldername, max_workers=max_workers
+        )
+        logger.info(f"Background classification completed for {dataset_id}/{foldername}: {len(result_df)} rows")
+    except Exception as e:
+        logger.error(f"Background classification failed for {dataset_id}/{foldername}: {e}", exc_info=True)
+        # Update error state
+        try:
+            state = session.query(DatasetProcessingState).filter(
+                DatasetProcessingState.dataset_id == dataset_id,
+                DatasetProcessingState.foldername == foldername
+            ).first()
+            if state:
+                state.status = "failed"
+                state.error_message = str(e)
+                session.commit()
+        except Exception as db_error:
+            session.rollback()
+            logger.error(f"Failed to update error state: {db_error}", exc_info=True)
+    finally:
+        session.close()
+
+
 @router.post("/datasets/{dataset_id}/classify", response_model=Dict)
 def start_classification(
     dataset_id: str,
@@ -166,6 +226,9 @@ def start_classification(
 ):
     """
     Start classification stage (after verification).
+    
+    This endpoint starts classification asynchronously and returns immediately.
+    Use the GET /datasets/{dataset_id}/status endpoint to poll for progress.
 
     Args:
         dataset_id: Dataset identifier
@@ -175,58 +238,115 @@ def start_classification(
         dataset_service: Dataset service
 
     Returns:
-        Classification result summary
+        Response indicating classification has started
 
     Raises:
         HTTPException: If dataset not found or not verified
     """
     try:
+        # Verify dataset is in correct state
+        from core.database.models import DatasetProcessingState
+        from core.classification.constants import WorkflowStatus
+        from core.classification.validators import validate_state_transition
+        
+        state = session.query(DatasetProcessingState).filter(
+            DatasetProcessingState.dataset_id == dataset_id,
+            DatasetProcessingState.foldername == foldername
+        ).first()
+        
+        if not state:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Dataset '{dataset_id}' not found in folder '{foldername}'. Please run canonicalization first."
+            )
+        
+        if state.status not in [WorkflowStatus.VERIFIED, WorkflowStatus.COMPLETED]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Dataset must be verified before classification. Current status: {state.status}"
+            )
+        
+        # Check if classification is already running
+        if state.status == WorkflowStatus.CLASSIFYING:
+            return {
+                "status": "already_running",
+                "dataset_id": dataset_id,
+                "foldername": foldername,
+                "message": "Classification is already in progress. Poll /status endpoint for progress."
+            }
+        
         # Get taxonomy path directly from dataset directory (same level as input.csv)
+        from pathlib import Path
         try:
             # Get the actual taxonomy file path from storage
             if hasattr(dataset_service.storage, '_get_yaml_path'):
-                taxonomy_path = str(dataset_service.storage._get_yaml_path(dataset_id, foldername))
+                taxonomy_path_obj = dataset_service.storage._get_yaml_path(dataset_id, foldername)
+                # Convert Path object to absolute string path
+                if isinstance(taxonomy_path_obj, Path):
+                    taxonomy_path = str(taxonomy_path_obj.resolve())
+                else:
+                    taxonomy_path = str(taxonomy_path_obj)
             else:
                 # Fallback: construct path manually
-                from pathlib import Path
                 config = get_config()
-                datasets_dir = config.datasets_dir
+                datasets_dir = Path(config.datasets_dir)
                 if foldername == "":
-                    taxonomy_path = str(datasets_dir / dataset_id / "taxonomy.yaml")
+                    taxonomy_path = str((datasets_dir / dataset_id / "taxonomy.yaml").resolve())
                 else:
-                    taxonomy_path = str(datasets_dir / foldername / dataset_id / "taxonomy.yaml")
+                    taxonomy_path = str((datasets_dir / foldername / dataset_id / "taxonomy.yaml").resolve())
             
             # Verify the file exists
             taxonomy_file = Path(taxonomy_path)
             if not taxonomy_file.exists():
                 raise FileNotFoundError(f"Taxonomy file not found: {taxonomy_path}")
+            
+            logger.info(f"Using taxonomy path: {taxonomy_path}")
         except Exception as e:
             # No fallback - taxonomy must exist in dataset directory
-            logger.error(f"Could not load taxonomy from dataset {dataset_id}: {e}")
+            logger.error(f"Could not load taxonomy from dataset {dataset_id}: {e}", exc_info=True)
             raise HTTPException(
                 status_code=404,
                 detail=f"Taxonomy file not found for dataset '{dataset_id}' in folder '{foldername}'. "
-                       f"Expected taxonomy.yaml in the same directory as input.csv."
+                       f"Expected taxonomy.yaml in the same directory as input.csv. Error: {str(e)}"
             )
         
-        classification_service = ClassificationService(
-            session, dataset_service, taxonomy_path
+        # Update state to "classifying" before starting background thread
+        try:
+            validate_state_transition(state.status, WorkflowStatus.CLASSIFYING)
+            state.status = WorkflowStatus.CLASSIFYING
+            state.progress_invoices_total = None
+            state.progress_invoices_processed = 0
+            state.progress_percentage = 0
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            raise HTTPException(status_code=400, detail=f"Failed to update state: {str(e)}")
+        
+        # Get database path for background thread
+        config = get_config()
+        db_path = str(config.database_path)
+        
+        # Start classification in background thread
+        thread = threading.Thread(
+            target=_run_classification_in_background,
+            args=(dataset_id, foldername, taxonomy_path, max_workers, db_path),
+            daemon=True
         )
-        result_df = classification_service.classify_dataset(
-            dataset_id, foldername, max_workers=max_workers
-        )
+        thread.start()
         
         return {
-            "status": "completed",
+            "status": "started",
             "dataset_id": dataset_id,
             "foldername": foldername,
-            "row_count": len(result_df),
-            "message": "Classification completed successfully"
+            "message": "Classification started. Poll GET /datasets/{dataset_id}/status endpoint for progress."
         }
+    except HTTPException:
+        raise
     except (ClassificationError, InvalidStateTransitionError, CSVIntegrityError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Classification failed: {str(e)}")
+        logger.error(f"Failed to start classification: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to start classification: {str(e)}")
 
 
 @router.get("/datasets/{dataset_id}/status", response_model=WorkflowStatusResponse)

@@ -207,6 +207,12 @@ class DatasetProcessingState(Base):
     # Metadata
     run_id = Column(String(36), nullable=True)  # UUID
     error_message = Column(Text, nullable=True)
+    
+    # Progress tracking (for async classification)
+    progress_invoices_total = Column(Integer, nullable=True)  # Total number of invoices to process
+    progress_invoices_processed = Column(Integer, nullable=True, default=0)  # Number of invoices completed
+    progress_percentage = Column(Integer, nullable=True, default=0)  # Percentage complete (0-100)
+    
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     

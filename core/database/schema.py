@@ -75,6 +75,26 @@ def _migrate_existing_database(engine):
                         except Exception:
                             pass  # Index might already exist or table structure different
 
+        # Migrate dataset_processing_states table to add progress tracking columns
+        if 'dataset_processing_states' in inspector.get_table_names():
+            columns = [col['name'] for col in inspector.get_columns('dataset_processing_states')]
+            
+            # Add progress tracking columns if they don't exist
+            if 'progress_invoices_total' not in columns:
+                with engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE dataset_processing_states ADD COLUMN progress_invoices_total INTEGER"))
+                    conn.commit()
+            
+            if 'progress_invoices_processed' not in columns:
+                with engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE dataset_processing_states ADD COLUMN progress_invoices_processed INTEGER DEFAULT 0"))
+                    conn.commit()
+            
+            if 'progress_percentage' not in columns:
+                with engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE dataset_processing_states ADD COLUMN progress_percentage INTEGER DEFAULT 0"))
+                    conn.commit()
+
         # Check if supplier_classifications table exists
         if 'supplier_classifications' in inspector.get_table_names():
             columns = [col['name'] for col in inspector.get_columns('supplier_classifications')]

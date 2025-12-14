@@ -204,6 +204,10 @@ class WorkflowStatusResponse(BaseModel):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     message: Optional[str] = None
+    # Progress tracking (for async classification)
+    progress_invoices_total: Optional[int] = None
+    progress_invoices_processed: Optional[int] = None
+    progress_percentage: Optional[int] = None
 
 
 class ClassificationStatusResponse(BaseModel):

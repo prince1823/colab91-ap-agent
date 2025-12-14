@@ -101,7 +101,7 @@ class WorkflowManager:
                 "message": "No processing state found. Start with canonicalization."
             }
 
-        return {
+        result = {
             "dataset_id": dataset_id,
             "foldername": foldername,
             "status": state.status,
@@ -112,6 +112,14 @@ class WorkflowManager:
             "created_at": state.created_at.isoformat() if state.created_at else None,
             "updated_at": state.updated_at.isoformat() if state.updated_at else None,
         }
+        
+        # Add progress tracking if available (for async classification)
+        if hasattr(state, 'progress_invoices_total') and state.progress_invoices_total is not None:
+            result["progress_invoices_total"] = state.progress_invoices_total
+            result["progress_invoices_processed"] = state.progress_invoices_processed or 0
+            result["progress_percentage"] = state.progress_percentage or 0
+        
+        return result
 
     def continue_workflow(
         self, dataset_id: str, foldername: str = "default"

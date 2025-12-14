@@ -139,8 +139,18 @@ curl -X POST "http://localhost:8000/api/v1/datasets/innova/verify?foldername=" \
   -H "Content-Type: application/json" \
   -d '{"auto_approve": true}'
 
-# Step 3: Classify
-curl -X POST "http://localhost:8000/api/v1/datasets/innova/classify?foldername="
+# Step 3: Start Classification (async - returns immediately)
+curl -X POST "http://localhost:8000/api/v1/datasets/innova/classify?foldername=&max_workers=4"
+
+# Step 4: Poll Status (check progress)
+curl "http://localhost:8000/api/v1/datasets/innova/status?foldername="
+
+# Keep polling until status is "completed"
+while [ "$(curl -s 'http://localhost:8000/api/v1/datasets/innova/status?foldername=' | jq -r '.status')" != "completed" ]; do
+  echo "Still processing..."
+  sleep 3
+done
+echo "✅ Classification completed!"
 ```
 
 ### 3. Query Results
@@ -626,7 +636,7 @@ curl -X POST "http://localhost:8000/api/v1/datasets/innova/verify?foldername=" \
 
 **POST** `/datasets/{dataset_id}/classify`
 
-Start the classification process on a verified canonicalized dataset. This runs the full classification pipeline with supplier research and expert classification.
+Start the classification process on a verified canonicalized dataset. This endpoint starts classification **asynchronously** and returns immediately. Use the status endpoint to poll for progress.
 
 **Path Parameters:**
 - `dataset_id` (required, string): Dataset identifier
@@ -638,11 +648,10 @@ Start the classification process on a verified canonicalized dataset. This runs 
 **Response:** `200 OK`
 ```json
 {
-  "status": "completed",
+  "status": "started",
   "dataset_id": "innova",
   "foldername": "",
-  "row_count": 256,
-  "message": "Classification completed successfully"
+  "message": "Classification started. Poll GET /datasets/{dataset_id}/status endpoint for progress."
 }
 ```
 
@@ -652,13 +661,30 @@ curl -X POST "http://localhost:8000/api/v1/datasets/innova/classify?foldername=&
 ```
 
 **What Happens:**
-- Reads `canonicalized.csv`
-- For each transaction:
-  - Supplier research (if needed)
-  - Context prioritization
-  - Expert classification using taxonomy
-- Generates `classified.csv` with L1, L2, L3, L4 classifications
-- Updates workflow status to `completed`
+- Classification runs in a background thread
+- Returns immediately with status "started"
+- Updates workflow status to `classifying`
+- Progress is tracked in the database (invoices processed, percentage)
+- Client should poll the status endpoint to check progress
+
+**Polling for Progress:**
+```bash
+# Poll status endpoint every few seconds
+while true; do
+  STATUS=$(curl -s "http://localhost:8000/api/v1/datasets/innova/status?foldername=" | jq -r '.status')
+  echo "Status: $STATUS"
+  
+  if [ "$STATUS" = "completed" ]; then
+    echo "✅ Classification completed!"
+    break
+  elif [ "$STATUS" = "failed" ]; then
+    echo "❌ Classification failed!"
+    break
+  fi
+  
+  sleep 3
+done
+```
 
 **Classification Process:**
 1. **Supplier Research**: If supplier is unknown, research agent gathers information
@@ -666,13 +692,21 @@ curl -X POST "http://localhost:8000/api/v1/datasets/innova/classify?foldername=&
 3. **Expert Classification**: Uses taxonomy RAG and LLM to classify into L1|L2|L3|L4 path
 4. **Rule Application**: Applies any active supplier rules (direct mappings or constraints)
 
+**Why Async?**
+- Large datasets can take minutes or hours to classify
+- HTTP requests typically timeout after 30-60 seconds
+- Async pattern allows:
+  - Immediate response (no timeout issues)
+  - Progress tracking (see how many invoices are processed)
+  - Better user experience (can check status without blocking)
+
 ---
 
 #### Get Workflow Status
 
 **GET** `/datasets/{dataset_id}/status`
 
-Get the current workflow status for a dataset.
+Get the current workflow status for a dataset. This endpoint includes progress tracking for async classification.
 
 **Path Parameters:**
 - `dataset_id` (required, string): Dataset identifier
@@ -685,13 +719,16 @@ Get the current workflow status for a dataset.
 {
   "dataset_id": "innova",
   "foldername": "",
-  "status": "verified",
+  "status": "classifying",
   "canonicalized_csv_path": "datasets/innova/canonicalized.csv",
   "classification_result_path": null,
   "run_id": "550e8400-e29b-41d4-a716-446655440000",
   "error_message": null,
   "created_at": "2024-01-15T10:00:00",
-  "updated_at": "2024-01-15T10:05:00"
+  "updated_at": "2024-01-15T10:05:00",
+  "progress_invoices_total": 50,
+  "progress_invoices_processed": 25,
+  "progress_percentage": 50
 }
 ```
 
@@ -701,13 +738,53 @@ Get the current workflow status for a dataset.
 - `canonicalized` - Canonicalization complete, awaiting verification
 - `awaiting_verification` - Ready for human review
 - `verified` - Verified and ready for classification
-- `classifying` - Currently running classification
+- `classifying` - Currently running classification (async)
 - `completed` - All stages complete
 - `failed` - Error occurred
+
+**Progress Fields (available when `status` is `classifying`):**
+- `progress_invoices_total` (int): Total number of invoices to process
+- `progress_invoices_processed` (int): Number of invoices completed
+- `progress_percentage` (int): Percentage complete (0-100)
 
 **Example:**
 ```bash
 curl "http://localhost:8000/api/v1/datasets/innova/status?foldername="
+```
+
+**Polling Example (Python):**
+```python
+import requests
+import time
+
+def poll_classification_status(dataset_id, foldername="", poll_interval=3):
+    """Poll classification status until completion."""
+    url = f"http://localhost:8000/api/v1/datasets/{dataset_id}/status"
+    params = {"foldername": foldername}
+    
+    while True:
+        response = requests.get(url, params=params)
+        data = response.json()
+        
+        status = data["status"]
+        print(f"Status: {status}")
+        
+        if status == "classifying":
+            progress = data.get("progress_percentage", 0)
+            processed = data.get("progress_invoices_processed", 0)
+            total = data.get("progress_invoices_total", "?")
+            print(f"Progress: {processed}/{total} invoices ({progress}%)")
+        elif status == "completed":
+            print("✅ Classification completed!")
+            return data
+        elif status == "failed":
+            print(f"❌ Classification failed: {data.get('error_message')}")
+            return data
+        
+        time.sleep(poll_interval)
+
+# Usage
+poll_classification_status("innova", foldername="")
 ```
 
 ---
@@ -1695,10 +1772,12 @@ Workflow state is tracked in the database and can be paused/resumed at any stage
 ### Complete Workflow Example
 
 ```bash
-# 1. Create dataset
-curl -X POST "http://localhost:8000/api/v1/datasets" \
-  -H "Content-Type: application/json" \
-  -d '{"dataset_id": "innova", "foldername": "", "input_csv_path": "datasets/innova/input.csv", "taxonomy_yaml_path": "datasets/innova/taxonomy.yaml"}'
+# 1. Create dataset (file upload)
+curl -X POST "http://localhost:8000/api/v1/datasets/upload" \
+  -F "dataset_id=innova" \
+  -F "foldername=" \
+  -F "input_csv=@datasets/innova/input.csv" \
+  -F "taxonomy_yaml=@datasets/innova/taxonomy.yaml"
 
 # 2. Canonicalize
 curl -X POST "http://localhost:8000/api/v1/datasets/innova/canonicalize?foldername="
@@ -1708,18 +1787,35 @@ curl -X POST "http://localhost:8000/api/v1/datasets/innova/verify?foldername=" \
   -H "Content-Type: application/json" \
   -d '{"auto_approve": true}'
 
-# 4. Classify
-curl -X POST "http://localhost:8000/api/v1/datasets/innova/classify?foldername="
+# 4. Start Classification (async - returns immediately)
+curl -X POST "http://localhost:8000/api/v1/datasets/innova/classify?foldername=&max_workers=4"
 
-# 5. Query results
+# 5. Poll Status (check progress)
+while true; do
+  STATUS=$(curl -s "http://localhost:8000/api/v1/datasets/innova/status?foldername=" | jq -r '.status')
+  PROGRESS=$(curl -s "http://localhost:8000/api/v1/datasets/innova/status?foldername=" | jq -r '.progress_percentage // 0')
+  echo "Status: $STATUS (Progress: $PROGRESS%)"
+  
+  if [ "$STATUS" = "completed" ]; then
+    echo "✅ Classification completed!"
+    break
+  elif [ "$STATUS" = "failed" ]; then
+    echo "❌ Classification failed!"
+    break
+  fi
+  
+  sleep 3
+done
+
+# 6. Query results
 curl "http://localhost:8000/api/v1/transactions?dataset_id=innova&foldername=&page=1&limit=50"
 
-# 6. Submit feedback
+# 7. Submit feedback
 curl -X POST "http://localhost:8000/api/v1/feedback" \
   -H "Content-Type: application/json" \
   -d '{"dataset_id": "innova", "foldername": "", "row_index": 2, "corrected_path": "non clinical|professional services|consulting", "feedback_text": "Should be professional services"}'
 
-# 7. Approve and apply feedback
+# 8. Approve and apply feedback
 FEEDBACK_ID=1
 curl -X POST "http://localhost:8000/api/v1/feedback/$FEEDBACK_ID/approve" \
   -H "Content-Type: application/json" \
@@ -1728,6 +1824,21 @@ curl -X POST "http://localhost:8000/api/v1/feedback/$FEEDBACK_ID/apply" \
   -H "Content-Type: application/json" \
   -d '{"row_indices": [2]}'
 ```
+
+### Async Classification Pattern
+
+For large datasets, classification runs asynchronously:
+
+1. **Start Classification**: POST returns immediately with `"status": "started"`
+2. **Poll Status**: GET `/datasets/{dataset_id}/status` to check progress
+3. **Monitor Progress**: Response includes `progress_percentage`, `progress_invoices_processed`, `progress_invoices_total`
+4. **Completion**: Status changes to `"completed"` when done
+
+**Benefits:**
+- No HTTP timeouts for long-running processes
+- Real-time progress tracking
+- Better user experience
+- Can handle datasets of any size
 
 ---
 
