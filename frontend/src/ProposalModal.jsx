@@ -1,7 +1,8 @@
 import React, { useState } from 'react'
 
 function ProposalModal({ proposal, onClose, onApprove, onReject, loading = false }) {
-  const [editedText, setEditedText] = useState(proposal.proposed_change || '')
+  const proposalText = proposal.proposal_text || proposal.proposed_change || proposal.action_details?.proposed_change || ''
+  const [editedText, setEditedText] = useState(proposalText)
   const [validationErrors, setValidationErrors] = useState([])
 
   const handleApprove = () => {
@@ -27,6 +28,8 @@ function ProposalModal({ proposal, onClose, onApprove, onReject, loading = false
     return labels[type] || type
   }
 
+  const description = proposal.action_reasoning || proposal.action_details?.description || proposal.description || 'No description available'
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal proposal-modal" onClick={(e) => e.stopPropagation()}>
@@ -40,7 +43,7 @@ function ProposalModal({ proposal, onClose, onApprove, onReject, loading = false
           
           <div className="proposal-field">
             <label>Description:</label>
-            <p className="proposal-description">{proposal.description}</p>
+            <p className="proposal-description">{description}</p>
           </div>
         </div>
 

@@ -1,160 +1,221 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { AgGridReact } from 'ag-grid-react'
 import 'ag-grid-community/styles/ag-grid.css'
 import 'ag-grid-community/styles/ag-theme-alpine.css'
 import axios from 'axios'
 import FeedbackModal from './FeedbackModal'
-import ProposalModal from './ProposalModal'
-import BulkChangeModal from './BulkChangeModal'
 import './App.css'
 
-const API_BASE = 'http://localhost:8000/api'
-const DEFAULT_RESULT_FILE = 'classified.csv'
-const DEFAULT_TAXONOMY_FILE = 'FOX_20230816_161348.yaml'
+const API_BASE = 'http://localhost:8000/api/v1'
+const DEFAULT_DATASET_ID = 'innova'
+const DEFAULT_FOLDERNAME = 'default'
+
+// Custom cell renderer for reasoning column with read more/less
+const ReasoningCellRenderer = ({ value }) => {
+  const [expanded, setExpanded] = useState(false)
+  
+  if (!value || value.trim() === '') {
+    return <span></span>
+  }
+  
+  const words = value.trim().split(/\s+/)
+  const previewWords = words.slice(0, 3).join(' ')
+  const shouldTruncate = words.length > 3
+  
+  return (
+    <div style={{ padding: '4px 0' }}>
+      {expanded || !shouldTruncate ? (
+        <div>
+          <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.4, marginBottom: '4px' }}>
+            {value}
+          </div>
+          {shouldTruncate && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setExpanded(false)
+              }}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#0066cc',
+                cursor: 'pointer',
+                textDecoration: 'underline',
+                fontSize: '12px',
+                padding: 0
+              }}
+            >
+              Read less
+            </button>
+          )}
+        </div>
+      ) : (
+        <div>
+          <span>{previewWords}...</span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              setExpanded(true)
+            }}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#0066cc',
+              cursor: 'pointer',
+              textDecoration: 'underline',
+              fontSize: '12px',
+              padding: 0,
+              marginLeft: '4px'
+            }}
+          >
+            Read more
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Hard-coded CSV file content from classified.csv
+const HARD_CODED_CSV = `supplier_name,gl_description,line_description,memo,line_memo,invoice_date,company,creation_date,amount,currency,Cost Center Name,Client Spend Category,Supplier Category,Country,L1,L2,L3,L4,L5,override_rule_applied,reasoning,should_research,prioritization_strategy,supplier_context_strength,transaction_data_quality,prioritization_reasoning,error
+kpmg llp,professional fees,"progress billing for professional services rendered pursuant to the engagement letter dated october 13, 2020 in connection with tax compliance services:","progress billing for professional services rendered pursuant to the engagement letter dated october 13, 2020 in connection with tax compliance services:",[blank],2022-02-24,"le0017 innovacare services company, llc",2022-02-24,105000.0,usd,corporate_inno,sc00138 professional services consulting,professional services,united states of america,non clinical,professional services,audit and tax services,audit and tax services,,,"[high] The transaction involves multiple line items primarily related to professional services rendered by KPMG LLP, specifically in the area of tax compliance and consulting. The significant amount of $107,736.00 indicates a major service engagement, aligning with the supplier's profile of providing professional services, particularly in tax and audit. The descriptions of the line items explicitly mention tax consulting services and compliance, which strongly correlate with the taxonomy paths related to audit and tax services. Given the prioritization hint of 'transaction_primary', the focus is on the nature of the services provided rather than the supplier's general profile, leading to a classification that emphasizes the consulting and tax services rendered. [Invoice-level batch processing]",True,transaction_primary,none,rich,"The transaction data provides a clear and specific description of the services rendered, indicating that this is a billing for professional tax consulting services. The amount is substantial, and the invoice date is provided, which adds to the context. However, the supplier profile is not available, which limits the ability to assess the supplier's context. Given that ""kpmg llp"" is a well-known professional services firm, it is likely that research would yield useful information about their services and industry. Therefore, research is warranted to gain a better understanding of the supplier's context. [Invoice-level assessment: 5 line items]",
+kpmg llp,accounts payable,"progress billing for professional services rendered pursuant to the engagement letter dated october 13, 2020 in connection with tax compliance services:","progress billing for professional services rendered pursuant to the engagement letter dated october 13, 2020 in connection with tax compliance services:","progress billing for professional services rendered pursuant to the engagement letter dated october 13, 2020 in connection with tax compliance services:",2022-02-24,"le0017 innovacare services company, llc",2022-02-24,0.0,usd,[blank],[blank],professional services,united states of america,non clinical,professional services,audit and tax services,audit and tax services,,,"[high] The transaction involves multiple line items primarily related to professional services rendered by KPMG LLP, specifically in the area of tax compliance and consulting. The significant amount of $107,736.00 indicates a major service engagement, aligning with the supplier's profile of providing professional services, particularly in tax and audit. The descriptions of the line items explicitly mention tax consulting services and compliance, which strongly correlate with the taxonomy paths related to audit and tax services. Given the prioritization hint of 'transaction_primary', the focus is on the nature of the services provided rather than the supplier's general profile, leading to a classification that emphasizes the consulting and tax services rendered. [Invoice-level batch processing]",True,transaction_primary,none,rich,"The transaction data provides a clear and specific description of the services rendered, indicating that this is a billing for professional tax consulting services. The amount is substantial, and the invoice date is provided, which adds to the context. However, the supplier profile is not available, which limits the ability to assess the supplier's context. Given that ""kpmg llp"" is a well-known professional services firm, it is likely that research would yield useful information about their services and industry. Therefore, research is warranted to gain a better understanding of the supplier's context. [Invoice-level assessment: 5 line items]",
+kpmg llp,accounts payable,"billing for tax consulting services per the engagement letter dated october 13, 2020.","billing for tax consulting services per the engagement letter dated october 13, 2020.","billing for tax consulting services per the engagement letter dated october 13, 2020.",2022-02-24,"le0017 innovacare services company, llc",2022-02-24,0.0,usd,[blank],[blank],professional services,united states of america,non clinical,professional services,audit and tax services,audit and tax services,,,"[high] The transaction involves multiple line items primarily related to professional services rendered by KPMG LLP, specifically in the area of tax compliance and consulting. The significant amount of $107,736.00 indicates a major service engagement, aligning with the supplier's profile of providing professional services, particularly in tax and audit. The descriptions of the line items explicitly mention tax consulting services and compliance, which strongly correlate with the taxonomy paths related to audit and tax services. Given the prioritization hint of 'transaction_primary', the focus is on the nature of the services provided rather than the supplier's general profile, leading to a classification that emphasizes the consulting and tax services rendered. [Invoice-level batch processing]",True,transaction_primary,none,rich,"The transaction data provides a clear and specific description of the services rendered, indicating that this is a billing for professional tax consulting services. The amount is substantial, and the invoice date is provided, which adds to the context. However, the supplier profile is not available, which limits the ability to assess the supplier's context. Given that ""kpmg llp"" is a well-known professional services firm, it is likely that research would yield useful information about their services and industry. Therefore, research is warranted to gain a better understanding of the supplier's context. [Invoice-level assessment: 5 line items]",
+kpmg llp,professional fees,"billing for tax consulting services per the engagement letter dated october 13, 2020.","billing for tax consulting services per the engagement letter dated october 13, 2020.",[blank],2022-02-24,"le0017 innovacare services company, llc",2022-02-24,2736.0,usd,corporate_inno,sc00138 professional services consulting,professional services,united states of america,non clinical,professional services,audit and tax services,audit and tax services,,,"[high] The transaction involves multiple line items primarily related to professional services rendered by KPMG LLP, specifically in the area of tax compliance and consulting. The significant amount of $107,736.00 indicates a major service engagement, aligning with the supplier's profile of providing professional services, particularly in tax and audit. The descriptions of the line items explicitly mention tax consulting services and compliance, which strongly correlate with the taxonomy paths related to audit and tax services. Given the prioritization hint of 'transaction_primary', the focus is on the nature of the services provided rather than the supplier's general profile, leading to a classification that emphasizes the consulting and tax services rendered. [Invoice-level batch processing]",True,transaction_primary,none,rich,"The transaction data provides a clear and specific description of the services rendered, indicating that this is a billing for professional tax consulting services. The amount is substantial, and the invoice date is provided, which adds to the context. However, the supplier profile is not available, which limits the ability to assess the supplier's context. Given that ""kpmg llp"" is a well-known professional services firm, it is likely that research would yield useful information about their services and industry. Therefore, research is warranted to gain a better understanding of the supplier's context. [Invoice-level assessment: 5 line items]",
+kpmg llp,accounts payable,"fees for q4 2020 federal tax estimates, pursuant to our engagement letter dated october 13, 2020 and the addendum dated december 11, 2020.","fees for q4 2020 federal tax estimates, pursuant to our engagement letter dated october 13, 2020 and the addendum dated december 11, 2020.","fees for q4 2020 federal tax estimates, pursuant to our engagement letter dated october 13, 2020 and the addendum dated december 11, 2020.",2022-02-24,"le0017 innovacare services company, llc",2022-02-24,0.0,usd,[blank],[blank],professional services,united states of america,non clinical,professional services,audit and tax services,audit and tax services,,,"[high] The transaction involves multiple line items primarily related to professional services rendered by KPMG LLP, specifically in the area of tax compliance and consulting. The significant amount of $107,736.00 indicates a major service engagement, aligning with the supplier's profile of providing professional services, particularly in tax and audit. The descriptions of the line items explicitly mention tax consulting services and compliance, which strongly correlate with the taxonomy paths related to audit and tax services. Given the prioritization hint of 'transaction_primary', the focus is on the nature of the services provided rather than the supplier's general profile, leading to a classification that emphasizes the consulting and tax services rendered. [Invoice-level batch processing]",True,transaction_primary,none,rich,"The transaction data provides a clear and specific description of the services rendered, indicating that this is a billing for professional tax consulting services. The amount is substantial, and the invoice date is provided, which adds to the context. However, the supplier profile is not available, which limits the ability to assess the supplier's context. Given that ""kpmg llp"" is a well-known professional services firm, it is likely that research would yield useful information about their services and industry. Therefore, research is warranted to gain a better understanding of the supplier's context. [Invoice-level assessment: 5 line items]",
+`
 
 function App() {
   const gridApiRef = useRef(null)
   const [results, setResults] = useState([])
-  const [selectedFile, setSelectedFile] = useState(DEFAULT_RESULT_FILE)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
   const [feedbackModal, setFeedbackModal] = useState(null)
-  const [proposalModal, setProposalModal] = useState(null)
-  const [bulkChangeModal, setBulkChangeModal] = useState(null)
   const [selectedRows, setSelectedRows] = useState([])
-  const [processingFeedback, setProcessingFeedback] = useState(false)
-  const [iteration, setIteration] = useState(0)
-  const [feedbackStats, setFeedbackStats] = useState({
-    total: 0,
-    correct: 0,
-    incorrect: 0,
-    corrections: 0,
-  })
-  const [canonicalColumns, setCanonicalColumns] = useState([])
-  const [columnOverrides, setColumnOverrides] = useState({})
-  const [savingOverrides, setSavingOverrides] = useState(false)
-  const [overrideRules, setOverrideRules] = useState([])
-  const [loadingRules, setLoadingRules] = useState(false)
+  const [feedbackItems, setFeedbackItems] = useState([])
+  const [loadingFeedback, setLoadingFeedback] = useState(false)
+  const [expandedFeedbackIds, setExpandedFeedbackIds] = useState(new Set())
+  const [submittingFeedback, setSubmittingFeedback] = useState(false)
 
-  const syncCanonicalColumns = useCallback((cols, overridesFromServer = {}) => {
-    setCanonicalColumns(cols)
-    setColumnOverrides((prev) => {
-      const next = { ...prev }
-      cols.forEach((col) => {
-        const incoming = overridesFromServer[col.canonical_name]
-        if (typeof incoming === 'string' && incoming.trim()) {
-          next[col.canonical_name] = incoming.trim()
-        } else if (!next[col.canonical_name]) {
-          next[col.canonical_name] = col.canonical_name
+  // Parse CSV helper function
+  const parseCSV = (csvText) => {
+    const lines = csvText.split('\n').filter(line => line.trim())
+    if (lines.length === 0) return []
+    
+    // Parse header
+    const headers = parseCSVLine(lines[0])
+    
+    // Parse data rows
+    const rows = []
+    for (let i = 1; i < lines.length; i++) {
+      const values = parseCSVLine(lines[i])
+      if (values.length === 0) continue
+      
+      const row = {}
+      headers.forEach((header, idx) => {
+        row[header] = values[idx] || ''
+      })
+      row.row_index = i - 1 // 0-based index
+      rows.push(row)
+    }
+    
+    return rows
+  }
+
+  // Parse a single CSV line handling quoted fields
+  const parseCSVLine = (line) => {
+    const result = []
+    let current = ''
+    let inQuotes = false
+    
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i]
+      const nextChar = line[i + 1]
+      
+      if (char === '"') {
+        if (inQuotes && nextChar === '"') {
+          // Escaped quote
+          current += '"'
+          i++
+        } else {
+          // Toggle quote state
+          inQuotes = !inQuotes
+        }
+      } else if (char === ',' && !inQuotes) {
+        // Field separator
+        result.push(current.trim())
+        current = ''
+      } else {
+        current += char
+      }
+    }
+    
+    // Add last field
+    result.push(current.trim())
+    return result
+  }
+
+  // Load feedback items
+  const loadFeedback = useCallback(async () => {
+    setLoadingFeedback(true)
+    try {
+      console.log(`Loading feedback for dataset_id: ${DEFAULT_DATASET_ID}`)
+      const response = await axios.get(`${API_BASE}/feedback`, {
+        params: {
+          dataset_id: DEFAULT_DATASET_ID,
+          limit: 100
         }
       })
-      return next
-    })
-  }, [])
-
-  const loadCanonicalColumns = useCallback(async () => {
-    try {
-      const response = await axios.get(`${API_BASE}/normalized-column-overrides`)
-      const cols = response.data.columns || []
-      const overridesFromServer = response.data.overrides || {}
-      syncCanonicalColumns(cols, overridesFromServer)
-    } catch (primaryErr) {
-      try {
-        const response = await axios.get(`${API_BASE}/canonical-columns`)
-        const cols = response.data.columns || []
-        const overridesFromServer = response.data.overrides || {}
-        syncCanonicalColumns(cols, overridesFromServer)
-      } catch (fallbackErr) {
-        setError(`Failed to load canonical columns: ${fallbackErr.message || fallbackErr}`)
-      }
-    }
-  }, [syncCanonicalColumns])
-
-  const loadOverrideRules = useCallback(async () => {
-    setLoadingRules(true)
-    try {
-      const response = await axios.get(`${API_BASE}/taxonomy/${DEFAULT_TAXONOMY_FILE}/override-rules`)
-      setOverrideRules(response.data.override_rules || [])
+      const items = response.data.items || []
+      console.log(`Loaded ${items.length} feedback items from API:`, items.map(item => ({
+        id: item.id,
+        row_index: item.row_index,
+        status: item.status
+      })))
+      
+      // Fetch detailed information for each feedback item
+      const detailedItems = await Promise.all(
+        items.map(async (item) => {
+          try {
+            const detailResponse = await axios.get(`${API_BASE}/feedback/${item.id}`)
+            return detailResponse.data
+          } catch (err) {
+            // If detail fetch fails, use the list item data
+            console.warn(`Failed to fetch details for feedback ${item.id}, using list data:`, err)
+            return item
+          }
+        })
+      )
+      
+      console.log(`Displaying ${detailedItems.length} feedback items in UI`)
+      setFeedbackItems(detailedItems)
     } catch (err) {
-      setError(`Failed to load override rules: ${err.message}`)
+      // Don't show error for feedback loading, it's optional
+      console.error('Failed to load feedback:', err)
     } finally {
-      setLoadingRules(false)
+      setLoadingFeedback(false)
     }
   }, [])
 
+  // Load hard-coded CSV rows on component mount
   useEffect(() => {
-    loadCanonicalColumns()
-    loadOverrideRules()
-  }, [loadCanonicalColumns, loadOverrideRules])
-
-  useEffect(() => {
-    if (selectedFile) {
-      loadResults(selectedFile)
-      loadFeedback(selectedFile)
-      extractIteration(selectedFile)
-    }
-  }, [selectedFile])
-
-  const [pageOffset, setPageOffset] = useState(0)
-  const pageLimit = 500
-  const [totalRows, setTotalRows] = useState(0)
-
-  const loadResultsPage = async (filename, offset = 0, append = false) => {
     setLoading(true)
-    setError(null)
     try {
-      const response = await axios.get(`${API_BASE}/results/${filename}/page`, {
-        params: { offset, limit: pageLimit },
-      })
-      const data = response.data
-      const rows = data.data || []
-      setTotalRows(data.total_rows || rows.length)
-      if (append) {
-        setResults((prev) => [...prev, ...rows])
-      } else {
+      const rows = parseCSV(HARD_CODED_CSV)
         setResults(rows)
-      }
-      setPageOffset(offset + rows.length)
     } catch (err) {
-      setError(`Failed to load results: ${err.message}`)
+      setError(`Failed to parse CSV: ${err.message}`)
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
-  const loadResults = (filename) => loadResultsPage(filename, 0, false)
+  // Load feedback on component mount
+  useEffect(() => {
+    loadFeedback()
+  }, [loadFeedback])
 
-  const loadFeedback = async (filename) => {
-    try {
-      const response = await axios.get(`${API_BASE}/feedback/${filename}`)
-      const batches = response.data.feedback_batches || []
-      let stats = { total: 0, correct: 0, incorrect: 0, corrections: 0 }
-      
-      batches.forEach(batch => {
-        batch.feedback_items.forEach(item => {
-          stats.total++
-          if (item.feedback_type === 'correct') stats.correct++
-          else if (item.feedback_type === 'incorrect') stats.incorrect++
-          else if (item.feedback_type === 'correction') stats.corrections++
-        })
-      })
-      
-      setFeedbackStats(stats)
-    } catch (err) {
-      // No feedback yet is okay
-      setFeedbackStats({ total: 0, correct: 0, incorrect: 0, corrections: 0 })
-    }
-  }
-
-  const extractIteration = (filename) => {
-    const match = filename.match(/iter(\d+)/)
-    if (match) {
-      setIteration(parseInt(match[1]) + 1) // Next iteration
-    } else {
-      setIteration(1)
-    }
-  }
 
   const handleOpenFeedback = () => {
     if (selectedRows.length === 0) {
@@ -163,155 +224,186 @@ function App() {
     }
     setFeedbackModal({
       rows: selectedRows,
-      filename: selectedFile,
-      iteration: iteration - 1, // Current iteration
+      filename: 'classified.csv',
+      iteration: 0,
     })
   }
 
-  const handleSubmitFeedback = async (feedbackData) => {
+  const handleSubmitFeedback = async (feedbackItems) => {
+    setSubmittingFeedback(true)
+    setError(null)
+    
+    // Close modal immediately for better UX
+    setFeedbackModal(null)
+    setSelectedRows([])
+    
+    // Show immediate feedback
+    setSuccess(`Submitting feedback for ${feedbackItems.length} item(s)...`)
+    
+    // Submit in background
     try {
-      const response = await axios.post(`${API_BASE}/feedback`, feedbackData)
-      setSuccess(`Feedback submitted successfully! ${response.data.items_count} items saved.`)
-      setFeedbackModal(null)
-      setSelectedRows([])
-      loadFeedback(selectedFile)
+      console.log(`Submitting feedback for ${feedbackItems.length} items:`, feedbackItems.map(item => ({
+        row_index: item.row_index,
+        corrected_path: item.corrected_path,
+        feedback_text: item.feedback_text?.substring(0, 50) + '...'
+      })))
       
-      // Process first feedback item to generate proposal
-      if (feedbackData.feedback_items && feedbackData.feedback_items.length > 0) {
-        await processFeedbackItem(0, feedbackData.result_file)
+      // Validate and truncate corrected_path to max 4 levels before submitting
+      const validatedItems = feedbackItems.map(item => {
+        let correctedPath = item.corrected_path || ''
+        if (correctedPath) {
+          const parts = correctedPath.split('|').map(p => p.trim()).filter(p => p)
+          if (parts.length > 4) {
+            correctedPath = parts.slice(0, 4).join('|')
+          }
+        }
+        return {
+          ...item,
+          corrected_path: correctedPath
+        }
+      })
+      
+      // Make POST API call for each feedback item
+      // Use Promise.allSettled to ensure all requests are attempted even if some fail
+      const promises = validatedItems.map((item, idx) => {
+        const payload = {
+          dataset_id: DEFAULT_DATASET_ID,
+          foldername: DEFAULT_FOLDERNAME,
+          row_index: item.row_index,
+          corrected_path: item.corrected_path || '',
+          feedback_text: item.feedback_text || '',
+        }
+        console.log(`Submitting feedback ${idx + 1}/${validatedItems.length} for row_index ${item.row_index}:`, payload)
+        return axios.post(`${API_BASE}/feedback`, payload, {
+          headers: {
+            'accept': 'application/json',
+            'Content-Type': 'application/json'
+          }
+        })
+      })
+      
+      const results = await Promise.allSettled(promises)
+      const successful = results.filter(r => r.status === 'fulfilled').length
+      const failed = results.filter(r => r.status === 'rejected').length
+      
+      console.log(`Feedback submission results: ${successful} succeeded, ${failed} failed`)
+      
+      // Log any failures
+      results.forEach((result, idx) => {
+        if (result.status === 'rejected') {
+          console.error(`Failed to submit feedback for row_index ${validatedItems[idx].row_index}:`, result.reason)
+        } else {
+          console.log(`Successfully submitted feedback for row_index ${validatedItems[idx].row_index}:`, result.value.data)
+        }
+      })
+      
+      if (successful > 0) {
+        setSuccess(`✅ Feedback submitted successfully! ${successful} item(s) saved.${failed > 0 ? ` ${failed} item(s) failed.` : ''}`)
+        
+        // Reload feedback list after submission
+        loadFeedback()
+        
+        setTimeout(() => setSuccess(null), 5000)
       }
+      
+      if (failed > 0) {
+        const errorMessages = results
+          .filter(r => r.status === 'rejected')
+          .map(r => r.reason.response?.data?.detail || r.reason.message)
+          .join('; ')
+        setError(`Failed to submit ${failed} feedback item(s): ${errorMessages}`)
+      }
+    } catch (err) {
+      if (err.code === 'ERR_NETWORK' || err.message.includes('ERR_CONNECTION_REFUSED')) {
+        setError(`Cannot connect to API at ${API_BASE}. Please ensure the backend is running on port 8000.`)
+      } else {
+        setError(`Failed to submit feedback: ${err.response?.data?.detail || err.message}`)
+      }
+    } finally {
+      setSubmittingFeedback(false)
+    }
+  }
+
+  const handleApproveFeedback = async (feedbackId, e) => {
+    e.stopPropagation() // Prevent expanding/collapsing the card
+    try {
+      setLoading(true)
+      setError(null)
+      
+      await axios.post(`${API_BASE}/feedback/${feedbackId}/approve`, {
+        edited_text: ''
+      }, {
+        headers: {
+          'accept': 'application/json',
+          'Content-Type': 'application/json'
+        }
+      })
+      
+      setSuccess(`Feedback #${feedbackId} approved successfully!`)
+      
+      // Reload feedback list after approval
+      loadFeedback()
+      
+        setTimeout(() => setSuccess(null), 5000)
+    } catch (err) {
+      setError(`Failed to approve feedback: ${err.response?.data?.detail || err.message}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleApplyFeedback = async (feedbackId, rowIndex, e) => {
+    e.stopPropagation() // Prevent expanding/collapsing the card
+    try {
+      setLoading(true)
+      setError(null)
+      
+      await axios.post(`${API_BASE}/feedback/${feedbackId}/apply`, {
+        row_indices: [rowIndex]
+      }, {
+        headers: {
+          'accept': 'application/json',
+          'Content-Type': 'application/json'
+        }
+      })
+      
+      setSuccess(`Feedback #${feedbackId} applied successfully!`)
+      
+      // Reload feedback list after applying
+      loadFeedback()
       
       setTimeout(() => setSuccess(null), 5000)
     } catch (err) {
-      setError(`Failed to submit feedback: ${err.message}`)
-    }
-  }
-
-  const processFeedbackItem = async (itemIndex, resultFile) => {
-    setProcessingFeedback(true)
-    setError(null)
-    try {
-      const response = await axios.post(`${API_BASE}/feedback/process`, {
-        result_file: resultFile,
-        feedback_item_index: itemIndex,
-      })
-      
-      setProposalModal({
-        proposal: response.data,
-        feedbackItemIndex: itemIndex,
-        resultFile: resultFile,
-      })
-    } catch (err) {
-      setError(`Failed to process feedback: ${err.message}`)
+      setError(`Failed to apply feedback: ${err.response?.data?.detail || err.message}`)
     } finally {
-      setProcessingFeedback(false)
+      setLoading(false)
     }
   }
 
-  const handleApproveProposal = async (editedText) => {
-    setProcessingFeedback(true)
-    setError(null)
-    try {
-      const response = await axios.post(`${API_BASE}/feedback/approve`, {
-        result_file: proposalModal.resultFile,
-        feedback_item_index: proposalModal.feedbackItemIndex,
-        action_proposal: proposalModal.proposal,
-        edited_text: editedText,
-      })
-      
-      setProposalModal(null)
-      
-      // If bulk approval needed, show bulk change modal
-      if (response.data.requires_bulk_approval && response.data.applicable_rows) {
-        setBulkChangeModal({
-          applicableRows: response.data.applicable_rows,
-          actionProposal: proposalModal.proposal,
-          resultFile: proposalModal.resultFile,
-          executionResult: response.data.execution_result,
-        })
-      } else {
-        setSuccess('Action approved and executed successfully!')
-        setTimeout(() => setSuccess(null), 5000)
-      }
-    } catch (err) {
-      setError(`Failed to approve action: ${err.message}`)
-    } finally {
-      setProcessingFeedback(false)
-    }
-  }
-
-  const handleRejectProposal = () => {
-    setProposalModal(null)
-  }
-
-  const handleApproveBulkChanges = async (actionProposal) => {
-    setProcessingFeedback(true)
-    setError(null)
-    try {
-      const response = await axios.post(`${API_BASE}/feedback/apply-bulk`, {
-        result_file: bulkChangeModal.resultFile,
-        action_proposal: actionProposal,
-        approved: true,
-      })
-      
-      setBulkChangeModal(null)
-      setSuccess(`Bulk changes applied successfully! ${response.data.rows_updated} rows updated. New file: ${response.data.updated_file}`)
-      setTimeout(() => {
-        setSuccess(null)
-        if (response.data.updated_file) {
-          setSelectedFile(response.data.updated_file)
-        } else if (selectedFile) {
-          loadResults(selectedFile)
-        }
-      }, 5000)
-    } catch (err) {
-      setError(`Failed to apply bulk changes: ${err.message}`)
-    } finally {
-      setProcessingFeedback(false)
-    }
-  }
-
-  const handleRejectBulkChanges = () => {
-    setBulkChangeModal(null)
-  }
-
-  const handleRunWithFeedback = async () => {
-    if (!selectedFile) {
-      setError('Please select a result file first')
+  const handleDeleteFeedback = async (feedbackId, e) => {
+    e.stopPropagation() // Prevent expanding/collapsing the card
+    if (!window.confirm(`Are you sure you want to delete Feedback #${feedbackId}?`)) {
       return
     }
-
-    setLoading(true)
-    setError(null)
+    
     try {
-      const overridesPayload = {}
-      canonicalColumns.forEach((col) => {
-        const value = columnOverrides[col.canonical_name]
-        if (value && value.trim() && value.trim() !== col.canonical_name) {
-          overridesPayload[col.canonical_name] = value.trim()
+      setLoading(true)
+      setError(null)
+      
+      await axios.delete(`${API_BASE}/feedback/${feedbackId}`, {
+        headers: {
+          'accept': 'application/json'
         }
       })
-
-      // Extract input file and taxonomy from the result file
-      // This is a simplified version - you might want to store this metadata
-      const response = await axios.post(`${API_BASE}/run`, {
-        input_file: `results/${selectedFile}`, // Adjust based on your structure
-          taxonomy_path: `taxonomies/${DEFAULT_TAXONOMY_FILE}`, // You might want to make this configurable
-        iteration: iteration,
-        use_feedback: true,
-        normalized_column_overrides: Object.keys(overridesPayload).length ? overridesPayload : undefined,
-      })
-
-      setSuccess(`Pipeline run completed! New iteration: ${response.data.iteration}`)
-      setTimeout(() => {
-        if (response.data.output_file) {
-          setSelectedFile(response.data.output_file)
-        } else if (selectedFile) {
-          loadResults(selectedFile)
-        }
-      }, 1000)
+      
+      setSuccess(`Feedback #${feedbackId} deleted successfully!`)
+      
+      // Reload feedback list after deletion
+      loadFeedback()
+      
+      setTimeout(() => setSuccess(null), 5000)
     } catch (err) {
-      setError(`Failed to run pipeline: ${err.message}`)
+      setError(`Failed to delete feedback: ${err.response?.data?.detail || err.message}`)
     } finally {
       setLoading(false)
     }
@@ -321,10 +413,6 @@ function App() {
     if (results.length === 0) return []
 
     const toHeader = (key) => {
-      const overrideName = columnOverrides[key]
-      if (overrideName && typeof overrideName === 'string' && overrideName.trim()) {
-        return overrideName.trim()
-      }
       return key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
     }
 
@@ -341,9 +429,9 @@ function App() {
       if (key === 'reasoning') {
         return {
           ...baseCol,
+          cellRenderer: ReasoningCellRenderer,
           autoHeight: true,
           wrapText: true,
-          cellStyle: { whiteSpace: 'pre-wrap', lineHeight: 1.4 },
         }
       }
 
@@ -365,7 +453,7 @@ function App() {
       },
       ...cols,
     ]
-  }, [results, columnOverrides])
+  }, [results])
 
   const defaultColDef = useMemo(() => ({
     sortable: true,
@@ -401,55 +489,6 @@ function App() {
     setSelectedRows(selected)
   }, [])
 
-  const handleOverrideChange = (canonicalName, value) => {
-    setColumnOverrides((prev) => ({
-      ...prev,
-      [canonicalName]: value,
-    }))
-  }
-
-  const resetOverrides = () => {
-    setColumnOverrides((prev) => {
-      const next = { ...prev }
-      canonicalColumns.forEach((col) => {
-        next[col.canonical_name] = col.canonical_name
-      })
-      return next
-    })
-  }
-
-  const handleSaveOverrides = async () => {
-    setSavingOverrides(true)
-    try {
-      const payload = {}
-      canonicalColumns.forEach((col) => {
-        const value = columnOverrides[col.canonical_name]
-        payload[col.canonical_name] = value && value.trim() ? value.trim() : col.canonical_name
-      })
-
-      await axios.post(`${API_BASE}/normalized-column-overrides`, { overrides: payload })
-      setSuccess('Normalized column names saved')
-      setTimeout(() => setSuccess(null), 4000)
-    } catch (err) {
-      setError(`Failed to save normalized column names: ${err.message}`)
-    } finally {
-      setSavingOverrides(false)
-    }
-  }
-
-  const handleDeleteRule = async (ruleIndex) => {
-    setLoadingRules(true)
-    try {
-      await axios.delete(`${API_BASE}/taxonomy/${DEFAULT_TAXONOMY_FILE}/override-rules/${ruleIndex}`)
-      setSuccess('Rule deleted from taxonomy')
-      loadOverrideRules()
-      setTimeout(() => setSuccess(null), 4000)
-    } catch (err) {
-      setError(`Failed to delete rule: ${err.message}`)
-    } finally {
-      setLoadingRules(false)
-    }
-  }
 
   const rowData = useMemo(() => results, [results])
 
@@ -476,10 +515,9 @@ function App() {
 
       <div className="controls">
         <div className="control-group">
-          <label>Result File</label>
+          <label>File</label>
           <div style={{ padding: '10px 12px', border: '1px solid #ddd', borderRadius: 6, background: '#f9fafb', minWidth: 260 }}>
-            <div style={{ fontWeight: 600 }}>{selectedFile}</div>
-            <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>Using bundled classified.csv</div>
+            <div style={{ fontWeight: 600 }}>classified.csv</div>
           </div>
         </div>
 
@@ -491,54 +529,6 @@ function App() {
         <button className="btn btn-primary" onClick={handleOpenFeedback} disabled={selectedRows.length === 0}>
           Provide Feedback ({selectedRows.length})
         </button>
-
-        <button className="btn btn-success" onClick={handleRunWithFeedback} disabled={!selectedFile || loading}>
-          {loading ? 'Running...' : `Run Next Iteration (${iteration})`}
-        </button>
-      </div>
-
-      <div className="override-panel">
-        <div className="override-header">
-          <div>
-            <strong>Override rules</strong>
-            <div className="override-helper">
-              Manage classification override rules saved in the taxonomy file.
-            </div>
-          </div>
-          <div className="override-actions">
-            <button className="btn btn-secondary" onClick={loadOverrideRules} disabled={loadingRules}>
-              {loadingRules ? 'Refreshing...' : 'Refresh rules'}
-            </button>
-          </div>
-        </div>
-        {overrideRules.length === 0 ? (
-          <div className="override-helper">No override rules saved yet.</div>
-        ) : (
-          <div className="override-grid">
-            {overrideRules.map((rule) => (
-              <div
-                key={rule.index}
-                className="override-row"
-                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}
-              >
-                <div className="override-label" style={{ flex: 1 }}>
-                  <div className="override-name">Rule #{rule.index + 1}</div>
-                  <div className="override-meta" style={{ whiteSpace: 'pre-wrap' }}>
-                    {rule.rule}
-                  </div>
-                </div>
-                <button
-                  className="btn btn-secondary"
-                  style={{ background: '#fef2f2', color: '#c0392b', borderColor: '#f5c6cb' }}
-                  onClick={() => handleDeleteRule(rule.index)}
-                  disabled={loadingRules}
-                >
-                  Delete
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       <div className="grid-container">
@@ -549,12 +539,7 @@ function App() {
         ) : (
           <>
             <div style={{ marginBottom: 10, fontSize: 12, color: '#555' }}>
-              Showing {results.length} of {totalRows || results.length} rows
-              {totalRows > results.length && (
-                <span style={{ marginLeft: 8 }}>
-                  (load more to see additional rows)
-                </span>
-              )}
+              Showing {results.length} rows
             </div>
             <div className="ag-theme-alpine" style={{ height: '600px', width: '100%' }}>
               <AgGridReact
@@ -574,17 +559,6 @@ function App() {
                 suppressHorizontalScroll={false}
               />
             </div>
-            {results.length < totalRows && (
-              <div style={{ marginTop: 10 }}>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => loadResultsPage(selectedFile, pageOffset, true)}
-                  disabled={loading}
-                >
-                  {loading ? 'Loading...' : `Load next ${pageLimit} rows`}
-                </button>
-              </div>
-            )}
           </>
         )}
       </div>
@@ -594,32 +568,215 @@ function App() {
           modal={feedbackModal}
           onClose={() => setFeedbackModal(null)}
           onSubmit={handleSubmitFeedback}
+          isSubmitting={submittingFeedback}
         />
       )}
 
-      {proposalModal && (
-        <ProposalModal
-          proposal={proposalModal.proposal}
-          onClose={handleRejectProposal}
-          onApprove={handleApproveProposal}
-          onReject={handleRejectProposal}
-          loading={processingFeedback}
-        />
-      )}
+      {/* Feedback Display Section */}
+      <div style={{ marginTop: '30px', borderTop: '2px solid #e0e0e0', paddingTop: '20px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+          <h2 style={{ margin: 0 }}>Submitted Feedback</h2>
+          <button 
+            className="btn btn-secondary" 
+            onClick={loadFeedback}
+            disabled={loadingFeedback}
+            style={{ fontSize: '14px', padding: '6px 12px' }}
+          >
+            {loadingFeedback ? 'Loading...' : 'Refresh'}
+          </button>
+        </div>
 
-      {bulkChangeModal && (
-        <BulkChangeModal
-          applicableRows={bulkChangeModal.applicableRows}
-          actionProposal={bulkChangeModal.actionProposal}
-          onClose={handleRejectBulkChanges}
-          onApprove={handleApproveBulkChanges}
-          onReject={handleRejectBulkChanges}
-          loading={processingFeedback}
-        />
-      )}
+        {loadingFeedback && feedbackItems.length === 0 ? (
+          <div className="loading">Loading feedback...</div>
+        ) : feedbackItems.length === 0 ? (
+          <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+            No feedback submitted yet.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {feedbackItems.map((feedback) => {
+              const isExpanded = expandedFeedbackIds.has(feedback.id)
+              const statusColor = {
+                pending: '#f59e0b',
+                approved: '#10b981',
+                applied: '#3b82f6'
+              }[feedback.status] || '#6b7280'
+
+              return (
+                <div
+                  key={feedback.id}
+                  style={{
+                    border: '1px solid #ddd',
+                    borderRadius: '8px',
+                    padding: '15px',
+                    background: '#fff',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  onClick={() => {
+                    const newExpanded = new Set(expandedFeedbackIds)
+                    if (isExpanded) {
+                      newExpanded.delete(feedback.id)
+                    } else {
+                      newExpanded.add(feedback.id)
+                    }
+                    setExpandedFeedbackIds(newExpanded)
+                  }}
+                >
+                  {/* Summary/Header */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+                        <span style={{ 
+                          fontWeight: 'bold', 
+                          fontSize: '16px',
+                          color: '#333'
+                        }}>
+                          Feedback #{feedback.id}
+                        </span>
+                        <span style={{
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                          fontSize: '12px',
+                          fontWeight: '600',
+                          background: statusColor + '20',
+                          color: statusColor
+                        }}>
+                          {feedback.status?.toUpperCase() || 'UNKNOWN'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '14px', color: '#666', marginBottom: '4px' }}>
+                        <strong>Row {feedback.row_index}</strong> • Dataset: {feedback.dataset_id}
+                      </div>
+                      <div style={{ fontSize: '13px', color: '#555', marginTop: '8px' }}>
+                        <div style={{ marginBottom: '4px' }}>
+                          <span style={{ color: '#999' }}>Original: </span>
+                          <span style={{ color: '#dc2626' }}>{feedback.original_classification || 'N/A'}</span>
+                        </div>
+                        <div>
+                          <span style={{ color: '#999' }}>Corrected: </span>
+                          <span style={{ color: '#16a34a' }}>{feedback.corrected_classification || 'N/A'}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      {feedback.status === 'pending' && (
+                        <>
+                          <button
+                            className="btn btn-success"
+                            onClick={(e) => handleApproveFeedback(feedback.id, e)}
+                            disabled={loading}
+                            style={{ 
+                              fontSize: '13px', 
+                              padding: '6px 12px',
+                              background: '#10b981',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: loading ? 'not-allowed' : 'pointer'
+                            }}
+                          >
+                            {loading ? 'Approving...' : 'Approve'}
+                          </button>
+                          <button
+                            onClick={(e) => handleDeleteFeedback(feedback.id, e)}
+                            disabled={loading}
+                            style={{ 
+                              fontSize: '16px', 
+                              padding: '6px 10px',
+                              background: 'transparent',
+                              color: '#dc2626',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: loading ? 'not-allowed' : 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}
+                            title="Delete feedback"
+                          >
+                            🗑️
+                          </button>
+                        </>
+                      )}
+                      {feedback.status === 'approved' && (
+                        <button
+                          className="btn btn-primary"
+                          onClick={(e) => handleApplyFeedback(feedback.id, feedback.row_index, e)}
+                          disabled={loading}
+                          style={{ 
+                            fontSize: '13px', 
+                            padding: '6px 12px',
+                            background: '#3b82f6',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: loading ? 'not-allowed' : 'pointer'
+                          }}
+                        >
+                          {loading ? 'Applying...' : 'Apply'}
+                        </button>
+                      )}
+                      <div style={{ fontSize: '20px', color: '#999', marginLeft: '5px' }}>
+                        {isExpanded ? '▼' : '▶'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Expanded Details */}
+                  {isExpanded && (
+                    <div style={{ 
+                      marginTop: '15px', 
+                      paddingTop: '15px', 
+                      borderTop: '1px solid #e5e7eb',
+                      fontSize: '14px'
+                    }}>
+                      {feedback.feedback_text && (
+                        <div style={{ marginBottom: '12px' }}>
+                          <strong style={{ color: '#374151' }}>Feedback Text:</strong>
+                          <div style={{ marginTop: '4px', padding: '8px', background: '#f9fafb', borderRadius: '4px', whiteSpace: 'pre-wrap' }}>
+                            {feedback.feedback_text}
+                          </div>
+                        </div>
+                      )}
+
+                      {feedback.action_reasoning && (
+                        <div style={{ marginBottom: '12px' }}>
+                          <strong style={{ color: '#374151' }}>Action Reasoning:</strong>
+                          <div style={{ marginTop: '4px', padding: '8px', background: '#f9fafb', borderRadius: '4px', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
+                            {feedback.action_reasoning}
+                          </div>
+                        </div>
+                      )}
+
+                      {feedback.proposal_text && (
+                        <div style={{ marginBottom: '12px' }}>
+                          <strong style={{ color: '#374151' }}>Proposal:</strong>
+                          <div style={{ marginTop: '4px', padding: '8px', background: '#eff6ff', borderRadius: '4px', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
+                            {feedback.proposal_text}
+                          </div>
+                        </div>
+                      )}
+
+                      {feedback.created_at && (
+                        <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '12px' }}>
+                          <strong>Created:</strong> {new Date(feedback.created_at).toLocaleString()}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
     </div>
   )
 }
 
 export default App
+
+
 

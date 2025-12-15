@@ -54,7 +54,7 @@ function BulkChangeModal({
           
           <div className="info-section">
             <label>Proposed Change:</label>
-            <p className="proposed-change-text">{actionProposal.proposed_change}</p>
+            <p className="proposed-change-text">{actionProposal.proposal_text || actionProposal.proposed_change || actionProposal.action_details?.proposed_change || 'No change text available'}</p>
           </div>
           
           <div className="info-section">
