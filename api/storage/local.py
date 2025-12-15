@@ -134,16 +134,16 @@ class LocalStorageBackend(StorageBackend):
                 raise FileNotFoundError(f"CSV file '{csv_filename}' not found for dataset '{dataset_id}'")
             return csv_path
 
-        # Auto-detect CSV file
-        csv_path = self._find_csv_file(dataset_path)
-        if csv_path:
-            return csv_path
-
-        # Fallback to common names
-        for name in ["transactions.csv", "output.csv", "data.csv"]:
+        # Priority order for CSV detection (prefer classified.csv for HITL feedback operations)
+        for name in ["classified.csv", "transactions.csv", "output.csv", "data.csv"]:
             csv_path = dataset_path / name
             if csv_path.exists():
                 return csv_path
+
+        # Fallback to auto-detect any CSV file
+        csv_path = self._find_csv_file(dataset_path)
+        if csv_path:
+            return csv_path
 
         raise FileNotFoundError(f"No CSV file found for dataset '{dataset_id}' in folder '{foldername}'")
 
@@ -178,13 +178,22 @@ class LocalStorageBackend(StorageBackend):
             # Use specified filename
             csv_path = dataset_path / csv_filename
         else:
-            # For existing datasets, update the existing CSV file
-            existing_csv = self._find_csv_file(dataset_path)
-            if existing_csv:
-                csv_path = existing_csv
-            else:
-                # New dataset - use default transactions.csv
-                csv_path = dataset_path / "transactions.csv"
+            # For existing datasets, prefer classified.csv (priority order for HITL feedback)
+            csv_path = None
+            for name in ["classified.csv", "transactions.csv", "output.csv"]:
+                potential_path = dataset_path / name
+                if potential_path.exists():
+                    csv_path = potential_path
+                    break
+
+            if csv_path is None:
+                # Fallback to auto-detect or default
+                existing_csv = self._find_csv_file(dataset_path)
+                if existing_csv:
+                    csv_path = existing_csv
+                else:
+                    # New dataset - use default transactions.csv
+                    csv_path = dataset_path / "transactions.csv"
 
         df.to_csv(csv_path, index=False)
 
