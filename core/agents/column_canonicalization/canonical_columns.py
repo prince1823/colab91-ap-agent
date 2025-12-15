@@ -58,6 +58,22 @@ CANONICAL_COLUMNS = [
         common_aliases=["Description", "Line Description", "Item Description", "Details", "Transaction Description", "Line Item Description"],
         display_order=3,
     ),
+    CanonicalColumn(
+        canonical_name="memo",
+        data_type="string",
+        relevance_for_spend_analysis="Medium",
+        description="Memo/notes field - MEDIUM relevance for additional context about the transaction (e.g., operational journal entries, invoice details, transaction notes)",
+        common_aliases=["Memo", "Notes", "Transaction Memo", "Invoice Memo", "Journal Memo", "Memo Field"],
+        display_order=3,
+    ),
+    CanonicalColumn(
+        canonical_name="line_memo",
+        data_type="string",
+        relevance_for_spend_analysis="Medium",
+        description="Line-level memo/notes - MEDIUM relevance for line-item specific context and additional details about individual line items",
+        common_aliases=["Line Memo", "Line Notes", "Item Memo", "Line Item Memo", "Line Item Notes"],
+        display_order=3,
+    ),
     
     # HIGH relevance for classification
     CanonicalColumn(
@@ -106,11 +122,27 @@ CANONICAL_COLUMNS = [
         canonical_name="supplier_address",
         data_type="string",
         relevance_for_spend_analysis="Medium",
-        description="Supplier address/location - MEDIUM relevance for accurate web search and supplier identification",
-        common_aliases=["Vendor Address", "Supplier Address", "Address", "Location", "Vendor Location", "Supplier Location"],
+        description="Supplier address/location - MEDIUM relevance for accurate web search and supplier identification. Map the most complete address field available (prefer complete 'Supplier Address' over individual components like City/State).",
+        common_aliases=["Vendor Address", "Supplier Address", "Address", "Address Line1", "Address Line 1", "Supplier Address 1", "Location", "Vendor Location"],
         display_order=13,
     ),
-    
+    CanonicalColumn(
+        canonical_name="company",
+        data_type="string",
+        relevance_for_spend_analysis="Medium",
+        description="Company/legal entity - MEDIUM relevance for grouping transactions by business unit",
+        common_aliases=["Company", "Company Name", "Legal Entity", "Entity", "Company Code"],
+        display_order=14,
+    ),
+    CanonicalColumn(
+        canonical_name="creation_date",
+        data_type="date",
+        relevance_for_spend_analysis="Low",
+        description="Creation date of operational transaction or accounting journal - LOW relevance for classification, used for invoice grouping",
+        common_aliases=["Creation Date of Operational Transaction or Accounting Journal", "Creation Date", "Journal Creation Date", "Transaction Creation Date"],
+        display_order=15,
+    ),
+
     # LOW relevance for analytics/reporting (not classification)
     CanonicalColumn(
         canonical_name="amount",

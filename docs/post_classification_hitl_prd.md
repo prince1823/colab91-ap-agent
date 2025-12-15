@@ -1,0 +1,15 @@
+- User is shown a set of classified rows. If they see a row that is incorrect, they input the right classification (this will be a select list for l1,l2,l3,l4). Optional feedback in natural language.
+    - LLM takes user feedback and decides on downstream changes. See which of the downstream changes this applies to, then appropriately format a response to show to the user.
+    - If action 1 or 2, user is shown the appropriate text excerpt from the user context or taxonomy description along with the proposed change. The user has the option to apply this change.
+    - If action 3, user is shown the supplier name and the category rule that will be applied
+        - Category A will be a one-one mapping
+        - Category B will show a list of potential classifications back to the user.
+    - If action 4, create an sql query and format the response back to the user in a text like: “Just added new rule: if row has GL Account Code xxxx, always classify as aaaa|bbbb|cccc|dddd”
+- User is shown a text response with the proposed changes/rule additions. 
+    - User can also edit the text. User clicks approve.
+        - Apply user edits, if any. If there are issues for example, formatting issues with rule-based actions, fix and get user feedback again.
+- User sees issues related to the edits that the user made in step 2, if any. User can approve or reject. 
+    - Once approved, carry out the action (edit taxonomy/add to supplier database/ add rule)
+    - For supplier database and rule actions, find all the rows in the cube that the rule applies to. Show to the user.
+- User approves/rejects the bulk changes.
+    - If approved, the changes are made to the dataset.

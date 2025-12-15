@@ -1,113 +1,131 @@
-"""DSPy signature for spend classification agent."""
+"""DSPy Signature for spend classification."""
 
 import dspy
 
 
 class SpendClassificationSignature(dspy.Signature):
+    """Classify business transactions into taxonomy categories using contextual reasoning.
+    
+    APPROACH: Use contextual pattern recognition - evaluate all available signals and decide
+    what matters most for THIS specific transaction based on the context.
+    
+    CONTEXTUAL PATTERN RECOGNITION:
+    - Tax/VAT patterns: When you see "vertex", "vat", "indirect tax", "sales tax", "reverse charge" in 
+      descriptions, these often indicate a tax/regulatory category (e.g., exceptions|government / taxes).
+      However, if it's "tax ON something" (like "sales tax on software"), classify the underlying purchase.
+    - Supplier Profile: Understand what the supplier typically provides (industry, products/services).
+      This is often reliable, but consider: does the transaction match what the supplier sells?
+    - Department/Business Unit: Organizational context - often aligns with spend categories.
+    - GL Code: Structured codes may contain category hints - examine them for patterns.
+    - Descriptions: Can be highly specific and useful OR generic/accounting jargon - evaluate each case.
+      Accounting references ("accounts payable", "accrued invoices") are usually less useful than
+      specific product/service descriptions.
+    
+    PROCESS (Contextual Bottom-Up):
+    1. Review all available signals contextually - assess field completeness and data quality
+       - Note which fields are available (structured fields, descriptions, references)
+       - Evaluate the specificity and relevance of each field for THIS transaction
+       - Identify patterns you observe in the data (without hardcoded rules)
+    
+    2. Examine taxonomy paths starting from deepest/most specific levels (L5/L4) and work backward to L1
+       - Similarity scores (if shown) indicate RAG retrieval confidence - use as one signal
+       - Focus on matching the END of taxonomy paths (leaf nodes) first
+       - Consider the full hierarchy when multiple paths seem similar
+       - Understand category boundaries by examining the taxonomy structure itself
+    
+    3. Match transaction context to taxonomy paths - use ALL signals that seem relevant
+       - For each transaction, reason about which signals are most trustworthy for THIS specific case
+       - Consider: Does supplier profile match the transaction? Are descriptions specific or generic?
+       - Consider: Do patterns suggest special categories (tax, payment processing) that might override other signals?
+    
+    4. Contextual signal reliability assessment:
+       - Specific, detailed information > Generic, vague information (regardless of field type)
+       - Transaction-specific signals > Generic organizational context (when transaction is clear)
+       - Clear, unambiguous patterns > Ambiguous, conflicting signals
+       - Evaluate signal relevance dynamically - what matters most for THIS transaction?
+    
+    USE TRANSACTION AMOUNT FOR PATTERNS:
+    - Large one-time amounts (>$50k) → Capital equipment, major services, construction, infrastructure
+    - Small recurring amounts (same amount monthly/quarterly) → Subscriptions, utilities, recurring services, software licenses
+    - Medium recurring amounts → Professional services contracts, maintenance agreements
+    - Variable amounts → Usage-based services, one-time purchases
+    - Very large amounts (>$100k) → Major projects, enterprise contracts, capital investments
+    
+    USE INVOICE DATE FOR PATTERNS:
+    - Recurring dates (same day monthly/quarterly) → Recurring subscriptions/services
+    - Seasonal patterns → Category-specific timing (holiday marketing, year-end services)
+    
+    USE PO NUMBER:
+    - Same PO across multiple transactions → Related purchases, same project/category
+    - PO indicates contract → May have pre-categorized spend patterns
+    
+    USE COST CENTER:
+    - Organizational alignment with departments → Spend category context
+    - Cost center codes often indicate business function → Category hints
+    
+    CONTEXTUAL REASONING EXAMPLES:
+    - Tax/VAT transactions: If you see tax/VAT patterns and taxonomy has "exceptions|government / taxes",
+      strongly consider that path. Tax patterns often override other signals because they indicate
+      a regulatory/exception category rather than business spend.
+    - Supplier vs Transaction: If supplier sells "payroll services" but transaction shows "vertex tax",
+      the tax pattern may indicate this is actually a tax transaction, not payroll. Reason about context.
+    - Specific descriptions: "AWS Cloud Services" is more reliable than "services" - use the specific one.
+    - Accounting codes: "accounts payable" or "accrued invoices" are accounting processes, not categories.
+      However, descriptions WITHIN those codes might be useful.
+    
+    EDGE CASE HANDLING (Contextual):
+    - Zero or very small amounts: Evaluate if this is an adjustment, refund, or actual purchase based on context
+    - Missing/blank descriptions: Rely more on structured fields (department, GL code, supplier profile) if available
+    - Generic accounting references: May indicate processing entries rather than spend categories - evaluate contextually
+    - Supplier profile mismatch: If supplier typically provides X but transaction suggests Y, prioritize transaction context
+    
+    INVOICE-LEVEL CLASSIFICATION:
+    - For invoices with multiple line items, you will be shown all line items together
+    - Return ONE classification per line item in the order provided
+    - Most line items in an invoice often share the same classification
+    - Response format options:
+      * If ALL rows get the SAME classification → Return single path: "Technology|Software|Cloud Services"
+      * If rows need DIFFERENT classifications → Return JSON list: ["path1", "path2", "path3"]
+    - For single-row transactions, use the standard single output format
+
+    TAX OVERRIDE LOGIC:
+    - If an invoice has mostly non-tax items but includes one or two tax/VAT lines, treat the tax as INCIDENTAL to the purchase
+    - In this case, classify the tax line(s) the SAME as the other purchase items, NOT as 'exceptions|government / taxes'
+    - Example: Invoice has 5 lines for 'AWS Cloud Services' and 1 line for 'Sales Tax on AWS' → Classify ALL 6 lines as 'Technology|Software|Cloud Services'
+    - However, if ALL lines are tax-related, classify as tax category
+    - The goal is to capture the business spend category, not the accounting treatment of tax
+
+    GENERAL RULES:
+    - NEVER return just L1 - must have L1|L2|L3 minimum
+    - Prefer specific categories over "Other" when confident
+    - Distinguish consumption expenses (meals, services consumed) from operational purchases
+    - Consider context: What matters most for THIS transaction given all available signals?
+    - Patterns in descriptions (tax, payment processing) are contextual clues - evaluate their relevance
+    - Field completeness matters - use available fields contextually based on their quality and specificity
     """
-    Classify transactions into taxonomy categories using pipe-separated paths (e.g., "clinical|clinical supplies|medical-surgical supplies").
-
-    STEP 0A: EXEMPT/EXCEPTIONS DETECTION (check FIRST)
     
-    Spend on intercompany transfers, sponsorship, wages, government-related items, etc. should be 
-    bucketed under an Exempt category (L1). The L1 category name varies by taxonomy - it could be 
-    "exempt", "exceptions", or another name.
+    supplier_info: str = dspy.InputField(
+        desc="JSON with supplier name, industry, products/services, service_type. Understand what the supplier typically provides - this context helps inform classification, but evaluate if it matches the transaction."
+    )
+    transaction_info: str = dspy.InputField(
+        desc="Transaction details with all available signals and contextual patterns. Includes: Department, GL Code, Amount, PO Number, Cost Center, Invoice Date, and descriptions. Contextual patterns (tax/VAT, payment processing) are highlighted if detected. Evaluate all signals contextually - decide what matters most for THIS transaction."
+    )
+    taxonomy_sample: str = dspy.InputField(
+        desc="Taxonomy paths sorted by depth (deepest first). Start matching from the END (most specific categories) and work backward to L1. Consider all transaction signals when matching to taxonomy paths."
+    )
+    prioritization: str = dspy.InputField(
+        desc="Suggested prioritization hint: 'supplier_primary', 'transaction_primary', 'balanced', or 'supplier_only'. Use as guidance, but make your own contextual assessment of what matters most for this transaction."
+    )
+    domain_context: str = dspy.InputField(
+        desc="Company context (industry, sector, business_focus) from taxonomy file. Use this context to inform your understanding of the business domain - it may help narrow L1 selection when other signals are ambiguous."
+    )
     
-    FIRST: Scan the taxonomy_structure to identify what L1 category serves as the exempt/exceptions 
-    bucket. Look for L1 categories that contain paths like:
-    - "intercompany", "inter-company", "subsidiary", "related party", "internal transfer"
-    - "employee", "wages", "salary", "payroll", "compensation", "benefits"
-    - "charitable", "donation", "sponsorship", "grant", "contribution"
-    - "taxes", "regulatory", "license", "permit", "government fee"
-    - "directors", "board member", "board compensation"
-    
-    Once you identify the exempt/exceptions L1 category name from the taxonomy, use THAT category name.
-    
-    Detect exempt-type transactions:
-    - Intercompany: "intercompany", "inter-company", "subsidiary", "related party", "internal transfer"
-    - Employee: "wages", "salary", "payroll", "employee", "compensation", "benefits", "payroll processing"
-    - Charitable: "donation", "charitable", "sponsorship", "grant", "contribution", "philanthropy"
-    - Government: "tax", "regulatory", "license", "permit", "government fee", "compliance fee"
-    - Directors: "director", "board member", "board compensation"
-    
-    Use semantic understanding: "Payroll processing services" → exempt/exceptions (employee). 
-    "Sales tax on office supplies" → NOT exempt/exceptions (see tax handling). STOP if exempt/exceptions detected.
-
-    STEP 0B: TAX HANDLING
-    Taxes on purchases → classify with underlying purchase category.
-    Identify tax charges: sales tax, VAT, GST, use tax, excise tax, service tax.
-    If tax charge: find what it's ON → classify to same category as purchase.
-    If unclear what tax is on → classify to the exempt/exceptions L1 category (from STEP 0A) > taxes path.
-    Example: If exempt L1 is "exceptions", use "exceptions|government / taxes|government / taxes"
-    Example: If exempt L1 is "exempt", use "exempt|taxes and regulatory fees|taxes and regulatory fees other"
-    Only proceed if NOT exempt/exceptions and NOT tax charge.
-
-    CLASSIFICATION PROCEDURE:
-    1. Review: supplier (industry/products), line description, GL description, department
-    2. Find best matching taxonomy path (prefer deeper paths)
-    3. Split path into levels based on available_levels (ONLY return levels specified in available_levels)
-    4. For levels beyond available_levels, do NOT return them (not "None", just omit)
-
-    STRATEGY - Bottom-Up: Identify deepest confident level first (ideally L3+). L1/L2 auto-determined.
-    Example: "laptops" → L3="IT Hardware" → L1="IT", L2="IT Hardware" auto-determined.
-
-    PRIORITY:
-    1. Rich transaction data (PO/Invoice/GL) - PRIMARY when available. Use FIRST if clear (e.g., "laptops", "cloud hosting").
-    2. Supplier industry/products - PRIMARY when transaction data insufficient
-    3. Line description → Department → GL description (ignore generic like "accounts payable")
-
-    FALLBACK: If only L1 info available → Return only levels in available_levels.
-    Example: If available_levels is "L1, L2, L3" → Return L1=[Category]|L2=[Category] Other|L3=None
-    Example: If available_levels is "L1, L2, L3, L4" → Return L1=[Category]|L2=[Category] Other|L3=None|L4=None
-
-    EXAMPLES:
-    A) Supplier: "Cardinal Health", Line: "Surgical gloves" → "clinical|clinical supplies|medical-surgical supplies|medical-surgical supplies"
-    B) Supplier: "Microsoft", Line: "Software subscription" → "it & telecom|software|software licenses fees"
-    C) Line: "Inter-company transfer" → Find exempt L1 from taxonomy (e.g., "exempt" or "exceptions") → "exempt|intercompany|intercompany" OR "exceptions|intercompany|intercompany"
-    D) Line: "Payroll processing fees" → Find exempt L1 from taxonomy → "exempt|employee related|employee related other" OR "exceptions|employee expense claim|employee expense claim"
-    E) Line: "Sales tax on office supplies" → "non-clinical|general & administrative|office supplies|office supplies" (tax with purchase)
-    F) Line: "State sales tax" (unclear) → Find exempt L1 from taxonomy → "exempt|taxes and regulatory fees|taxes and regulatory fees other" OR "exceptions|government / taxes|government / taxes"
-    G) Line: "Purchase of 5 Dell laptops" → "it & telecom|it hardware|it hardware" (direct L3)
-    H) Supplier: "Local Services LLC", Line: "", available_levels="L1, L2, L3, L4" → "non-clinical|general & administrative|None|None"
-    I) Supplier: "Generic Services Inc", Line: "", available_levels="L1, L2, L3, L4" → "non-clinical|professional services|professional services other|None" (fallback - return only available levels)
-
-    Apply override rules FIRST if they exist.
-    """
-
-    supplier_profile: str = dspy.InputField(
-        desc="Supplier information (name, industry, products/services, description) - PRIMARY classification source"
+    classification_path: str = dspy.OutputField(
+        desc="Pipe-separated path like 'Technology|Software|Cloud Services'. MUST have at least 3 levels and exist in taxonomy - use validate_path to verify."
     )
-    transaction_data: str = dspy.InputField(
-        desc="Transaction details (GL description, line description, client_spend_category [HINT ONLY], department). NOTE: client_spend_category is a hint, NOT a taxonomy level"
-    )
-    taxonomy_structure: str = dspy.InputField(
-        desc="Client's taxonomy as a list of pipe-separated paths (e.g., ['L1|L2|L3', 'L1|L2|L3|L4']). Select the best matching path and split it into individual levels."
-    )
-    available_levels: str = dspy.InputField(
-        desc="Available taxonomy levels (e.g., 'L1, L2, L3'). Only return levels specified here."
-    )
-    override_rules: str = dspy.InputField(
-        desc="Override rules that take precedence (if any)"
-    )
-
-    L1: str = dspy.OutputField(
-        desc="Level 1 category (top level)"
-    )
-    L2: str = dspy.OutputField(
-        desc="Level 2 category (if applicable, otherwise 'None')"
-    )
-    L3: str = dspy.OutputField(
-        desc="Level 3 category (if applicable, otherwise 'None')"
-    )
-    L4: str = dspy.OutputField(
-        desc="Level 4 category (if applicable, otherwise 'None')"
-    )
-    L5: str = dspy.OutputField(
-        desc="Level 5 category (if applicable, otherwise 'None')"
-    )
-    override_rule_applied: str = dspy.OutputField(
-        desc="ID/description of override rule if applied, otherwise 'None'"
+    confidence: str = dspy.OutputField(
+        desc="'high' (clear match), 'medium' (reasonable match), 'low' (uncertain)"
     )
     reasoning: str = dspy.OutputField(
-        desc="Brief explanation of why this categorization was chosen"
+        desc="Brief explanation: what key signals led to this classification"
     )

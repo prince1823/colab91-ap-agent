@@ -88,6 +88,21 @@ class AppConfig(BaseSettings):
     # Data paths
     data_dir: Path = Field(default=Path("data"), alias="DATA_DIR")
     results_dir: Path = Field(default=Path("results"), alias="RESULTS_DIR")
+    datasets_dir: Path = Field(default=Path("datasets"), alias="DATASETS_DIR")
+    
+    # Database configuration
+    database_path: Path = Field(
+        default=Path("data/classifications.db"), alias="DATABASE_PATH"
+    )
+    enable_classification_cache: bool = Field(
+        default=False, alias="ENABLE_CLASSIFICATION_CACHE"
+    )
+    supplier_cache_max_age_days: Optional[int] = Field(
+        default=None, alias="SUPPLIER_CACHE_MAX_AGE_DAYS"
+    )
+    """Maximum age in days for cached supplier profiles. If None, uses any cached profile.
+    Set this to a value (e.g., 7) to invalidate stale profiles after research agent changes.
+    """
 
     # Per-Agent LLM Selection
     column_canonicalization_llm: str = Field(
@@ -96,6 +111,9 @@ class AppConfig(BaseSettings):
     research_llm: str = Field(default="openai", alias="RESEARCH_LLM")
     spend_classification_llm: str = Field(
         default="openai", alias="SPEND_CLASSIFICATION_LLM"
+    )
+    context_prioritization_llm: str = Field(
+        default="openai", alias="CONTEXT_PRIORITIZATION_LLM"
     )
 
     # LLM Provider Settings
@@ -114,6 +132,15 @@ class AppConfig(BaseSettings):
     # DSPy configuration
     dspy: DSPyConfig = Field(default_factory=DSPyConfig)
 
+    # Storage configuration
+    storage_type: str = Field(default="local", alias="STORAGE_TYPE")
+    s3_bucket: Optional[str] = Field(default=None, alias="S3_BUCKET")
+    s3_prefix: str = Field(default="benchmarks/", alias="S3_PREFIX")
+    local_base_dir: str = Field(default="benchmarks", alias="LOCAL_BASE_DIR")
+
+    # CORS configuration
+    cors_origins: str = Field(default="", alias="CORS_ORIGINS")
+
     class Config:
         env_file = "ops/.env"
         case_sensitive = False
@@ -125,7 +152,10 @@ class AppConfig(BaseSettings):
         # Ensure directories exist
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.results_dir.mkdir(parents=True, exist_ok=True)
+        self.datasets_dir.mkdir(parents=True, exist_ok=True)
         self.dspy.cache_dir.mkdir(parents=True, exist_ok=True)
+        # Ensure database directory exists
+        self.database_path.parent.mkdir(parents=True, exist_ok=True)
 
 
 # Global configuration instance

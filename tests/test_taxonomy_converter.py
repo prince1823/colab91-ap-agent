@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from core.utils.taxonomy_converter import convert_all_taxonomies
+from core.utils.taxonomy.taxonomy_converter import convert_all_taxonomies
 
 if __name__ == "__main__":
     extraction_outputs_dir = Path("extraction_outputs")

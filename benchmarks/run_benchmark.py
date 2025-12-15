@@ -2,36 +2,44 @@
 
 import json
 import time
+import yaml
 from pathlib import Path
 
 import pandas as pd
 
-from core.pipeline import SpendClassificationPipeline
+from core.classification.services.canonicalization_service import CanonicalizationService
+from core.classification.services.verification_service import VerificationService
+from core.classification.services.classification_service import ClassificationService
+from api.services.dataset_service import DatasetService
+from core.database.schema import get_session_factory, init_database
+from core.config import get_config
 
 
 def format_classification_output(L1, L2=None, L3=None, L4=None, L5=None) -> str:
     """Format classification result as a single string."""
     levels = []
-    if L1 and (isinstance(L1, str) or pd.notna(L1)):
-        levels.append(str(L1))
-    if L2 and (isinstance(L2, str) or pd.notna(L2)):
-        levels.append(str(L2))
-    if L3 and (isinstance(L3, str) or pd.notna(L3)):
-        levels.append(str(L3))
-    if L4 and (isinstance(L4, str) or pd.notna(L4)):
-        levels.append(str(L4))
-    if L5 and (isinstance(L5, str) or pd.notna(L5)):
-        levels.append(str(L5))
+    # Handle None, NaN, and empty strings
+    if L1 is not None and pd.notna(L1) and str(L1).strip():
+        levels.append(str(L1).strip())
+    if L2 is not None and pd.notna(L2) and str(L2).strip():
+        levels.append(str(L2).strip())
+    if L3 is not None and pd.notna(L3) and str(L3).strip():
+        levels.append(str(L3).strip())
+    if L4 is not None and pd.notna(L4) and str(L4).strip():
+        levels.append(str(L4).strip())
+    if L5 is not None and pd.notna(L5) and str(L5).strip():
+        levels.append(str(L5).strip())
     
-    return "|".join(levels)
+    return "|".join(levels) if levels else ""
 
 
-def process_single_dataset(dataset_dir: Path):
+def process_single_dataset(dataset_dir: Path, foldername: str = "default"):
     """
     Process a single dataset folder containing input.csv and expected.txt.
     
     Args:
         dataset_dir: Path to dataset folder (e.g., benchmarks/default/fox)
+        foldername: Folder name for dataset service (default: "default")
     
     Returns:
         tuple: (results_data list, output_csv path)
@@ -68,25 +76,99 @@ def process_single_dataset(dataset_dir: Path):
     
     taxonomy_path = str(taxonomy_yaml)
     
-    # Create pipeline once for the entire dataset (column canonicalization runs once)
-    pipeline = SpendClassificationPipeline(
-        taxonomy_path=taxonomy_path,
-        enable_tracing=True
-    )
+    # Load taxonomy YAML
+    with open(taxonomy_yaml, 'r') as f:
+        taxonomy_data = yaml.safe_load(f)
     
-    # Process all rows together - canonicalization happens once, then each row is classified
+    # Initialize database and services for new workflow
+    config = get_config()
+    engine = init_database(config.database_path)
+    SessionFactory = get_session_factory(engine)
+    session = SessionFactory()
+    
     try:
-        start_time = time.time()
-        result_df, intermediate = pipeline.process_transactions(
-            input_df,
-            taxonomy_path=taxonomy_path,
-            return_intermediate=True
-        )
-        elapsed_time = time.time() - start_time
-        print(f"Processing time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
+        # Initialize services
+        dataset_service = DatasetService()
         
-        mapping_result = intermediate['mapping_result']
-        supplier_profiles = intermediate['supplier_profiles']
+        # Create dataset in dataset service (if not exists)
+        try:
+            dataset_service.create_dataset(
+                dataset_id=dataset_name,
+                transactions=input_df.to_dict('records'),
+                taxonomy=taxonomy_data,
+                foldername=foldername,
+                csv_filename="input.csv"  # Use input.csv as the filename
+            )
+            print(f"Created dataset {dataset_name} in dataset service")
+        except ValueError:
+            # Dataset already exists, update it
+            dataset_service.update_dataset_csv(
+                dataset_id=dataset_name,
+                transactions=input_df.to_dict('records'),
+                foldername=foldername
+            )
+            print(f"Updated existing dataset {dataset_name} in dataset service")
+        
+        canonicalization_service = CanonicalizationService(session, dataset_service)
+        verification_service = VerificationService(session)
+        classification_service = ClassificationService(
+            session, dataset_service, taxonomy_path, enable_tracing=True
+        )
+        
+        # Step 1: Canonicalization
+        print(f"Step 1: Canonicalizing columns for {dataset_name}...")
+        start_time = time.time()
+        mapping_result = canonicalization_service.canonicalize_dataset(
+            dataset_id=dataset_name,
+            foldername=foldername
+        )
+        canonicalization_time = time.time() - start_time
+        print(f"Canonicalization completed in {canonicalization_time:.2f} seconds")
+        
+        # Step 2: Auto-approve verification (for benchmarks)
+        print(f"Step 2: Auto-approving canonicalization...")
+        verification_service.approve_canonicalization(
+            dataset_id=dataset_name,
+            foldername=foldername,
+            auto_approve=True
+        )
+        
+        # Step 3: Classification
+        print(f"Step 3: Classifying transactions...")
+        classification_start = time.time()
+        result_df = classification_service.classify_dataset(
+            dataset_id=dataset_name,
+            foldername=foldername,
+            max_workers=4,
+            taxonomy_path=taxonomy_path
+        )
+        classification_time = time.time() - classification_start
+        elapsed_time = time.time() - start_time
+        print(f"Classification completed in {classification_time:.2f} seconds")
+        print(f"Total processing time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
+        
+        # Get mapping result from state for output
+        from core.database.models import DatasetProcessingState
+        state = session.query(DatasetProcessingState).filter(
+            DatasetProcessingState.dataset_id == dataset_name,
+            DatasetProcessingState.foldername == foldername
+        ).first()
+        
+        if state and state.canonicalization_result:
+            mapping_result_dict = state.canonicalization_result
+            # Convert dict back to MappingResult-like object for compatibility
+            class MappingResultCompat:
+                def __init__(self, mappings, unmapped_columns):
+                    self.mappings = mappings
+                    self.unmapped_columns = unmapped_columns
+            mapping_result = MappingResultCompat(
+                mappings=mapping_result_dict.get('mappings', {}),
+                unmapped_columns=mapping_result_dict.get('unmapped_columns', [])
+            )
+        else:
+            mapping_result = None
+        
+        supplier_profiles = {}  # Not exposed in new workflow
         
         # Build results for each row
         results_data = []
@@ -119,6 +201,13 @@ def process_single_dataset(dataset_dir: Path):
                 # Extract reasoning from result
                 reasoning = result_row.get('reasoning', '') if 'reasoning' in result_row else ""
                 
+                # Extract prioritization decision fields
+                should_research = result_row.get('should_research', '') if 'should_research' in result_row else ""
+                prioritization_strategy = result_row.get('prioritization_strategy', '') if 'prioritization_strategy' in result_row else ""
+                supplier_context_strength = result_row.get('supplier_context_strength', '') if 'supplier_context_strength' in result_row else ""
+                transaction_data_quality = result_row.get('transaction_data_quality', '') if 'transaction_data_quality' in result_row else ""
+                prioritization_reasoning = result_row.get('prioritization_reasoning', '') if 'prioritization_reasoning' in result_row else ""
+                
                 row_data.update({
                     'expected_output': expected_output,
                     'pipeline_output': pipeline_output,
@@ -126,16 +215,26 @@ def process_single_dataset(dataset_dir: Path):
                     'supplier_profile': supplier_profile_json,
                     'reasoning': reasoning,
                     'error': error_msg,
+                    'should_research': should_research,
+                    'prioritization_strategy': prioritization_strategy,
+                    'supplier_context_strength': supplier_context_strength,
+                    'transaction_data_quality': transaction_data_quality,
+                    'prioritization_reasoning': prioritization_reasoning,
                 })
             else:
                 row_data.update({
-                    'expected_output': expected_output,
-                    'pipeline_output': "",
-                    'columns_used': "",
-                    'supplier_profile': "",
-                    'reasoning': "",
-                    'error': "No result returned from pipeline for this row",
-                })
+                'expected_output': expected_output,
+                'pipeline_output': "",
+                'columns_used': "",
+                'supplier_profile': "",
+                'reasoning': "",
+                'error': "No result returned from pipeline for this row",
+                'should_research': "",
+                'prioritization_strategy': "",
+                'supplier_context_strength': "",
+                'transaction_data_quality': "",
+                'prioritization_reasoning': "",
+            })
             
             results_data.append(row_data)
     
@@ -153,6 +252,11 @@ def process_single_dataset(dataset_dir: Path):
                 'supplier_profile': "",
                 'reasoning': "",
                 'error': str(e),
+                'should_research': "",
+                'prioritization_strategy': "",
+                'supplier_context_strength': "",
+                'transaction_data_quality': "",
+                'prioritization_reasoning': "",
             })
             results_data.append(row_data)
     
@@ -180,7 +284,9 @@ def run_benchmark(benchmark_folder: str = "default"):
     if input_csv.exists():
         # Mode 2: Process single dataset folder
         print(f"Processing single dataset: benchmarks/{benchmark_folder}")
-        results_data, output_csv = process_single_dataset(benchmark_dir)
+        # Extract foldername from path (e.g., "default/fox" -> "default")
+        foldername = benchmark_folder.split('/')[0] if '/' in benchmark_folder else "default"
+        results_data, output_csv = process_single_dataset(benchmark_dir, foldername=foldername)
         
         output_df = pd.DataFrame(results_data)
         output_df.to_csv(output_csv, index=False)
@@ -216,7 +322,7 @@ def run_benchmark(benchmark_folder: str = "default"):
             print(f"\n--- Processing {dataset_name} ---")
             
             try:
-                results_data, output_csv = process_single_dataset(dataset_dir)
+                results_data, output_csv = process_single_dataset(dataset_dir, foldername=benchmark_folder)
                 
                 output_df = pd.DataFrame(results_data)
                 output_df.to_csv(output_csv, index=False)

@@ -1,0 +1,175 @@
+"""Database schema initialization."""
+
+from pathlib import Path
+from typing import Optional
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from core.database.models import Base
+
+
+def init_database(db_path: Path, echo: bool = False):
+    """
+    Initialize database and create tables.
+    Handles schema migration for new fields (run_id, dataset_name).
+
+    Args:
+        db_path: Path to SQLite database file
+        echo: Whether to echo SQL queries (for debugging)
+    """
+    # Ensure parent directory exists
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Create engine
+    engine = create_engine(f"sqlite:///{db_path}", echo=echo)
+
+    # Create all tables
+    Base.metadata.create_all(engine)
+    
+    # Handle migration for existing databases
+    _migrate_existing_database(engine)
+
+    return engine
+
+
+def _migrate_existing_database(engine):
+    """
+    Migrate existing database to add run_id, dataset_name if they don't exist.
+    Sets default run_id for existing entries.
+    Also creates indexes and unique constraints for supplier rules tables if they don't exist.
+    Creates dataset_processing_states table if it doesn't exist.
+    
+    Note: HITL supplier rule columns are no longer used. Rules are stored in
+    supplier_direct_mappings and supplier_taxonomy_constraints tables.
+    """
+    from sqlalchemy import inspect, text
+
+    try:
+        inspector = inspect(engine)
+        
+        # Create dataset_processing_states table if it doesn't exist
+        if 'dataset_processing_states' not in inspector.get_table_names():
+            from core.database.models import DatasetProcessingState
+            DatasetProcessingState.__table__.create(engine, checkfirst=True)
+
+        # Migrate supplier rules tables (direct mappings and taxonomy constraints)
+        for table_name in ['supplier_direct_mappings', 'supplier_taxonomy_constraints']:
+            if table_name in inspector.get_table_names():
+                indexes = [idx['name'] for idx in inspector.get_indexes(table_name)]
+                
+                # Create composite lookup index if it doesn't exist
+                lookup_idx_name = f"idx_{table_name.split('_')[-1]}_lookup"  # idx_direct_mapping_lookup or idx_constraint_lookup
+                if lookup_idx_name not in indexes:
+                    with engine.connect() as conn:
+                        try:
+                            if table_name == 'supplier_direct_mappings':
+                                conn.execute(text(
+                                    f"CREATE INDEX IF NOT EXISTS {lookup_idx_name} ON {table_name}(supplier_name, dataset_name, active)"
+                                ))
+                            else:
+                                conn.execute(text(
+                                    f"CREATE INDEX IF NOT EXISTS {lookup_idx_name} ON {table_name}(supplier_name, dataset_name, active)"
+                                ))
+                            conn.commit()
+                        except Exception:
+                            pass  # Index might already exist or table structure different
+
+        # Migrate dataset_processing_states table to add progress tracking columns
+        if 'dataset_processing_states' in inspector.get_table_names():
+            columns = [col['name'] for col in inspector.get_columns('dataset_processing_states')]
+            
+            # Add progress tracking columns if they don't exist
+            if 'progress_invoices_total' not in columns:
+                with engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE dataset_processing_states ADD COLUMN progress_invoices_total INTEGER"))
+                    conn.commit()
+            
+            if 'progress_invoices_processed' not in columns:
+                with engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE dataset_processing_states ADD COLUMN progress_invoices_processed INTEGER DEFAULT 0"))
+                    conn.commit()
+            
+            if 'progress_percentage' not in columns:
+                with engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE dataset_processing_states ADD COLUMN progress_percentage INTEGER DEFAULT 0"))
+                    conn.commit()
+
+        # Check if supplier_classifications table exists
+        if 'supplier_classifications' in inspector.get_table_names():
+            columns = [col['name'] for col in inspector.get_columns('supplier_classifications')]
+
+            # Add run_id column if it doesn't exist
+            if 'run_id' not in columns:
+                with engine.connect() as conn:
+                    # SQLite doesn't support DEFAULT in ALTER TABLE, so add column then update
+                    conn.execute(text("ALTER TABLE supplier_classifications ADD COLUMN run_id VARCHAR(36)"))
+                    conn.execute(text("UPDATE supplier_classifications SET run_id = 'legacy' WHERE run_id IS NULL"))
+                    conn.commit()
+
+            # Add dataset_name column if it doesn't exist
+            if 'dataset_name' not in columns:
+                with engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE supplier_classifications ADD COLUMN dataset_name VARCHAR(255)"))
+                    conn.commit()
+
+            # Note: HITL supplier rule columns (supplier_rule_type, supplier_rule_paths, etc.)
+            # are no longer used. Rules are now stored in supplier_direct_mappings and
+            # supplier_taxonomy_constraints tables. Existing columns in old databases
+            # will remain but are not referenced.
+
+            # Create indexes if they don't exist
+            indexes = [idx['name'] for idx in inspector.get_indexes('supplier_classifications')]
+
+            if 'idx_run_supplier_hash' not in indexes:
+                with engine.connect() as conn:
+                    try:
+                        conn.execute(text(
+                            "CREATE INDEX IF NOT EXISTS idx_run_supplier_hash ON supplier_classifications(run_id, supplier_name, transaction_hash)"
+                        ))
+                        conn.commit()
+                    except Exception:
+                        pass  # Index might already exist
+
+            if 'idx_run_supplier_l1' not in indexes:
+                with engine.connect() as conn:
+                    try:
+                        conn.execute(text(
+                            "CREATE INDEX IF NOT EXISTS idx_run_supplier_l1 ON supplier_classifications(run_id, supplier_name, l1_category)"
+                        ))
+                        conn.commit()
+                    except Exception:
+                        pass  # Index might already exist
+
+        # Check if user_feedback table exists and add foldername column if missing
+        if 'user_feedback' in inspector.get_table_names():
+            columns = [col['name'] for col in inspector.get_columns('user_feedback')]
+            
+            # Add foldername column if it doesn't exist
+            if 'foldername' not in columns:
+                with engine.connect() as conn:
+                    try:
+                        conn.execute(text("ALTER TABLE user_feedback ADD COLUMN foldername VARCHAR(255)"))
+                        # Set default value for existing rows
+                        conn.execute(text("UPDATE user_feedback SET foldername = 'default' WHERE foldername IS NULL"))
+                        conn.commit()
+                    except Exception as e:
+                        # Column might already exist or other error
+                        pass
+    except Exception:
+        # Table might not exist yet (new database), that's fine
+        pass
+
+
+def get_session_factory(engine):
+    """
+    Get session factory for database operations.
+
+    Args:
+        engine: SQLAlchemy engine
+
+    Returns:
+        Session factory
+    """
+    return sessionmaker(bind=engine)
+

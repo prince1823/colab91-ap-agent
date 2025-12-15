@@ -1,12 +1,13 @@
 """Utility functions for the AP Agent application."""
 
-from core.utils.mlflow import (
+# Re-export commonly used utilities for backward compatibility
+from core.utils.infrastructure.mlflow import (
     setup_mlflow_tracing,
     mlflow_run,
     get_mlflow_tracking_uri,
     is_mlflow_enabled,
 )
-from core.utils.taxonomy_converter import (
+from core.utils.taxonomy.taxonomy_converter import (
     convert_all_taxonomies,
     convert_cube_taxonomy,
     discover_taxonomy_columns,
@@ -23,4 +24,3 @@ __all__ = [
     "discover_taxonomy_columns",
     "collect_paths_from_transactions",
 ]
-
