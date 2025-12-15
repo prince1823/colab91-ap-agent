@@ -1,43 +1,21 @@
-import React, { useState, useEffect } from 'react'
-import axios from 'axios'
+import React, { useState } from 'react'
 
 function FeedbackModal({ modal, onClose, onSubmit }) {
-  const [taxonomyStructure, setTaxonomyStructure] = useState({ L1: [], L2: {}, L3: {}, L4: {} })
-  const [loadingTaxonomy, setLoadingTaxonomy] = useState(false)
-  
   const [feedbackItems, setFeedbackItems] = useState(() => {
     return modal.rows.map((row, idx) => ({
       transaction_id: row.supplier_name || `row_${idx}`,
       row_index: idx,
-      feedback_type: 'correction',
+      feedback_type: 'correction', // free text
       corrected_l1: row.L1 || '',
       corrected_l2: row.L2 || '',
       corrected_l3: row.L3 || '',
       corrected_l4: row.L4 || '',
       corrected_l5: row.L5 || '',
       comment: '',
+      rating: '',
     }))
   })
-
-  // Load taxonomy structure on mount
-  useEffect(() => {
-    loadTaxonomyStructure()
-  }, [])
-
-  const loadTaxonomyStructure = async () => {
-    setLoadingTaxonomy(true)
-    try {
-      // Try to get taxonomy file from modal or use default
-      const taxonomyFile = modal.taxonomyFile || 'FOX_20230816_161348.yaml'
-      const response = await axios.get(`/api/taxonomy/${taxonomyFile}/structure`)
-      setTaxonomyStructure(response.data.structure || { L1: [], L2: {}, L3: {}, L4: {} })
-    } catch (error) {
-      console.error('Failed to load taxonomy structure:', error)
-      // Continue with empty structure - dropdowns will be empty
-    } finally {
-      setLoadingTaxonomy(false)
-    }
-  }
+  const [userNotes, setUserNotes] = useState('')
 
   const updateFeedbackItem = (index, field, value) => {
     const updated = [...feedbackItems]
@@ -46,10 +24,22 @@ function FeedbackModal({ modal, onClose, onSubmit }) {
   }
 
   const handleSubmit = () => {
+    const normalizedItems = feedbackItems.map((item) => {
+      const parsedRating =
+        item.rating === '' || item.rating === null || item.rating === undefined
+          ? undefined
+          : Number(item.rating)
+      return {
+        ...item,
+        rating: Number.isFinite(parsedRating) ? parsedRating : undefined,
+      }
+    })
+
     const feedbackData = {
       result_file: modal.filename,
       iteration: modal.iteration,
-      feedback_items: feedbackItems,
+      feedback_items: normalizedItems,
+      user_notes: userNotes || undefined,
     }
     onSubmit(feedbackData)
   }
@@ -74,90 +64,39 @@ function FeedbackModal({ modal, onClose, onSubmit }) {
               
               <div className="form-group">
                 <label>Corrected L1</label>
-                <select
+                <input
+                  type="text"
                   value={item.corrected_l1}
-                  onChange={(e) => {
-                    updateFeedbackItem(idx, 'corrected_l1', e.target.value)
-                    // Clear dependent levels when L1 changes
-                    if (e.target.value !== item.corrected_l1) {
-                      updateFeedbackItem(idx, 'corrected_l2', '')
-                      updateFeedbackItem(idx, 'corrected_l3', '')
-                      updateFeedbackItem(idx, 'corrected_l4', '')
-                    }
-                  }}
-                  style={{ width: '100%', padding: '8px' }}
-                  disabled={loadingTaxonomy}
-                >
-                  <option value="">Select L1...</option>
-                  {taxonomyStructure.L1.map((l1) => (
-                    <option key={l1} value={l1}>
-                      {l1}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(e) => updateFeedbackItem(idx, 'corrected_l1', e.target.value)}
+                  placeholder="Enter L1"
+                />
               </div>
               <div className="form-group">
                 <label>Corrected L2</label>
-                <select
+                <input
+                  type="text"
                   value={item.corrected_l2}
-                  onChange={(e) => {
-                    updateFeedbackItem(idx, 'corrected_l2', e.target.value)
-                    // Clear dependent levels when L2 changes
-                    if (e.target.value !== item.corrected_l2) {
-                      updateFeedbackItem(idx, 'corrected_l3', '')
-                      updateFeedbackItem(idx, 'corrected_l4', '')
-                    }
-                  }}
-                  style={{ width: '100%', padding: '8px' }}
-                  disabled={!item.corrected_l1 || loadingTaxonomy}
-                >
-                  <option value="">Select L2...</option>
-                  {item.corrected_l1 && taxonomyStructure.L2[item.corrected_l1]?.map((l2) => (
-                    <option key={l2} value={l2}>
-                      {l2}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(e) => updateFeedbackItem(idx, 'corrected_l2', e.target.value)}
+                  placeholder="Enter L2"
+                />
               </div>
               <div className="form-group">
                 <label>Corrected L3</label>
-                <select
+                <input
+                  type="text"
                   value={item.corrected_l3}
-                  onChange={(e) => {
-                    updateFeedbackItem(idx, 'corrected_l3', e.target.value)
-                    // Clear L4 when L3 changes
-                    if (e.target.value !== item.corrected_l3) {
-                      updateFeedbackItem(idx, 'corrected_l4', '')
-                    }
-                  }}
-                  style={{ width: '100%', padding: '8px' }}
-                  disabled={!item.corrected_l2 || loadingTaxonomy}
-                >
-                  <option value="">Select L3...</option>
-                  {item.corrected_l1 && item.corrected_l2 && 
-                   taxonomyStructure.L3[`${item.corrected_l1}|${item.corrected_l2}`]?.map((l3) => (
-                    <option key={l3} value={l3}>
-                      {l3}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(e) => updateFeedbackItem(idx, 'corrected_l3', e.target.value)}
+                  placeholder="Enter L3"
+                />
               </div>
               <div className="form-group">
                 <label>Corrected L4</label>
-                <select
+                <input
+                  type="text"
                   value={item.corrected_l4}
                   onChange={(e) => updateFeedbackItem(idx, 'corrected_l4', e.target.value)}
-                  style={{ width: '100%', padding: '8px' }}
-                  disabled={!item.corrected_l3 || loadingTaxonomy}
-                >
-                  <option value="">Select L4...</option>
-                  {item.corrected_l1 && item.corrected_l2 && item.corrected_l3 && 
-                   taxonomyStructure.L4[`${item.corrected_l1}|${item.corrected_l2}|${item.corrected_l3}`]?.map((l4) => (
-                    <option key={l4} value={l4}>
-                      {l4}
-                    </option>
-                  ))}
-                </select>
+                  placeholder="Enter L4"
+                />
               </div>
               <div className="form-group">
                 <label>Corrected L5</label>
@@ -166,6 +105,28 @@ function FeedbackModal({ modal, onClose, onSubmit }) {
                   value={item.corrected_l5}
                   onChange={(e) => updateFeedbackItem(idx, 'corrected_l5', e.target.value)}
                   placeholder={modal.rows[idx].L5 || 'Enter L5'}
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Feedback Type</label>
+                <input
+                  type="text"
+                  value={item.feedback_type}
+                  onChange={(e) => updateFeedbackItem(idx, 'feedback_type', e.target.value)}
+                  placeholder="correction / correct / incorrect"
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Rating (1-5)</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="5"
+                  value={item.rating}
+                  onChange={(e) => updateFeedbackItem(idx, 'rating', e.target.value)}
+                  placeholder="Optional"
                 />
               </div>
 
@@ -179,6 +140,15 @@ function FeedbackModal({ modal, onClose, onSubmit }) {
               </div>
             </div>
           ))}
+        </div>
+
+        <div className="form-group" style={{ marginTop: 12 }}>
+          <label>User notes (optional)</label>
+          <textarea
+            value={userNotes}
+            onChange={(e) => setUserNotes(e.target.value)}
+            placeholder="Any additional context for this feedback batch"
+          />
         </div>
 
         <div className="modal-actions">

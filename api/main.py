@@ -4,7 +4,7 @@ import json
 import csv
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 import numpy as np
 import yaml
 
@@ -26,7 +26,11 @@ app = FastAPI(title="AP Agent Feedback API", version="1.0.0")
 # Enable CORS for React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],  # React dev servers
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:5173",
+    ],  # React dev servers
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -63,6 +67,17 @@ def save_overrides(overrides: Dict[str, str]) -> None:
     """Persist normalized column overrides to disk."""
     with NORMALIZED_OVERRIDES_FILE.open("w") as f:
         json.dump(overrides, f, indent=2)
+
+
+def resolve_taxonomy_path(taxonomy_file: str) -> Path:
+    """
+    Resolve a taxonomy filename to an absolute path under the taxonomies directory
+    unless the caller already passed an absolute path.
+    """
+    taxonomy_path = Path(taxonomy_file)
+    if not taxonomy_path.is_absolute():
+        taxonomy_path = BASE_DIR / "taxonomies" / taxonomy_file
+    return taxonomy_path
 
 
 # Pydantic models
@@ -673,9 +688,8 @@ async def update_normalized_column_overrides(payload: NormalizedColumnOverrides)
 @app.get("/api/taxonomy/{taxonomy_file}/structure")
 async def get_taxonomy_structure(taxonomy_file: str):
     """Get taxonomy structure for populating dropdowns (L1, L2, L3, L4)."""
-    base_dir = Path(__file__).parent.parent
-    taxonomy_path = base_dir / "taxonomies" / taxonomy_file
-    
+    taxonomy_path = resolve_taxonomy_path(taxonomy_file)
+
     if not taxonomy_path.exists():
         raise HTTPException(status_code=404, detail=f"Taxonomy file not found: {taxonomy_file}")
     
@@ -742,6 +756,67 @@ async def get_taxonomy_structure(taxonomy_file: str):
     except Exception as e:
         import traceback
         raise HTTPException(status_code=500, detail=f"Error loading taxonomy: {str(e)}\n{traceback.format_exc()}")
+
+
+@app.get("/api/taxonomy/{taxonomy_file}/override-rules")
+async def list_override_rules(taxonomy_file: str):
+    """Return override rules stored in a taxonomy file."""
+    taxonomy_path = resolve_taxonomy_path(taxonomy_file)
+
+    if not taxonomy_path.exists():
+        raise HTTPException(status_code=404, detail=f"Taxonomy file not found: {taxonomy_file}")
+
+    try:
+        with taxonomy_path.open("r") as f:
+            taxonomy_data = yaml.safe_load(f) or {}
+
+        override_rules = taxonomy_data.get("override_rules", []) or []
+        return {
+            "taxonomy_file": taxonomy_file,
+            "override_rules": [
+                {"index": idx, "rule": rule}
+                for idx, rule in enumerate(override_rules)
+            ],
+            "count": len(override_rules),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read override rules: {str(exc)}")
+
+
+@app.delete("/api/taxonomy/{taxonomy_file}/override-rules/{rule_index}")
+async def delete_override_rule(taxonomy_file: str, rule_index: int):
+    """Delete a specific override rule by index from a taxonomy file."""
+    taxonomy_path = resolve_taxonomy_path(taxonomy_file)
+
+    if not taxonomy_path.exists():
+        raise HTTPException(status_code=404, detail=f"Taxonomy file not found: {taxonomy_file}")
+
+    if rule_index < 0:
+        raise HTTPException(status_code=400, detail="rule_index must be non-negative")
+
+    try:
+        with taxonomy_path.open("r") as f:
+            taxonomy_data = yaml.safe_load(f) or {}
+
+        override_rules = taxonomy_data.get("override_rules", []) or []
+        if rule_index >= len(override_rules):
+            raise HTTPException(status_code=404, detail=f"Rule index {rule_index} not found")
+
+        removed_rule = override_rules.pop(rule_index)
+        taxonomy_data["override_rules"] = override_rules
+
+        with taxonomy_path.open("w") as f:
+            yaml.safe_dump(taxonomy_data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+        return {
+            "status": "success",
+            "removed_rule": removed_rule,
+            "remaining_rules": len(override_rules),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to delete override rule: {str(exc)}")
 
 
 @app.get("/api/taxonomy/list")

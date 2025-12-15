@@ -8,13 +8,14 @@ import ProposalModal from './ProposalModal'
 import BulkChangeModal from './BulkChangeModal'
 import './App.css'
 
-const API_BASE = '/api'
+const API_BASE = 'http://localhost:8000/api'
+const DEFAULT_RESULT_FILE = 'classified.csv'
+const DEFAULT_TAXONOMY_FILE = 'FOX_20230816_161348.yaml'
 
 function App() {
   const gridApiRef = useRef(null)
   const [results, setResults] = useState([])
-  const [resultFiles, setResultFiles] = useState([])
-  const [selectedFile, setSelectedFile] = useState('')
+  const [selectedFile, setSelectedFile] = useState(DEFAULT_RESULT_FILE)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
@@ -33,18 +34,8 @@ function App() {
   const [canonicalColumns, setCanonicalColumns] = useState([])
   const [columnOverrides, setColumnOverrides] = useState({})
   const [savingOverrides, setSavingOverrides] = useState(false)
-
-  const loadResultFiles = async () => {
-    try {
-      const response = await axios.get(`${API_BASE}/results`)
-      setResultFiles(response.data.results || [])
-      if (response.data.results && response.data.results.length > 0) {
-        setSelectedFile(response.data.results[0].filename)
-      }
-    } catch (err) {
-      setError(`Failed to load result files: ${err.message}`)
-    }
-  }
+  const [overrideRules, setOverrideRules] = useState([])
+  const [loadingRules, setLoadingRules] = useState(false)
 
   const syncCanonicalColumns = useCallback((cols, overridesFromServer = {}) => {
     setCanonicalColumns(cols)
@@ -80,13 +71,23 @@ function App() {
     }
   }, [syncCanonicalColumns])
 
-  // Load result files on mount
-  useEffect(() => {
-    loadResultFiles()
-    loadCanonicalColumns()
-  }, [loadCanonicalColumns])
+  const loadOverrideRules = useCallback(async () => {
+    setLoadingRules(true)
+    try {
+      const response = await axios.get(`${API_BASE}/taxonomy/${DEFAULT_TAXONOMY_FILE}/override-rules`)
+      setOverrideRules(response.data.override_rules || [])
+    } catch (err) {
+      setError(`Failed to load override rules: ${err.message}`)
+    } finally {
+      setLoadingRules(false)
+    }
+  }, [])
 
-  // Load results when file is selected
+  useEffect(() => {
+    loadCanonicalColumns()
+    loadOverrideRules()
+  }, [loadCanonicalColumns, loadOverrideRules])
+
   useEffect(() => {
     if (selectedFile) {
       loadResults(selectedFile)
@@ -257,7 +258,11 @@ function App() {
       setSuccess(`Bulk changes applied successfully! ${response.data.rows_updated} rows updated. New file: ${response.data.updated_file}`)
       setTimeout(() => {
         setSuccess(null)
-        loadResultFiles()
+        if (response.data.updated_file) {
+          setSelectedFile(response.data.updated_file)
+        } else if (selectedFile) {
+          loadResults(selectedFile)
+        }
       }, 5000)
     } catch (err) {
       setError(`Failed to apply bulk changes: ${err.message}`)
@@ -291,7 +296,7 @@ function App() {
       // This is a simplified version - you might want to store this metadata
       const response = await axios.post(`${API_BASE}/run`, {
         input_file: `results/${selectedFile}`, // Adjust based on your structure
-        taxonomy_path: 'taxonomies/FOX_20230816_161348.yaml', // You might want to make this configurable
+          taxonomy_path: `taxonomies/${DEFAULT_TAXONOMY_FILE}`, // You might want to make this configurable
         iteration: iteration,
         use_feedback: true,
         normalized_column_overrides: Object.keys(overridesPayload).length ? overridesPayload : undefined,
@@ -299,7 +304,11 @@ function App() {
 
       setSuccess(`Pipeline run completed! New iteration: ${response.data.iteration}`)
       setTimeout(() => {
-        loadResultFiles()
+        if (response.data.output_file) {
+          setSelectedFile(response.data.output_file)
+        } else if (selectedFile) {
+          loadResults(selectedFile)
+        }
       }, 1000)
     } catch (err) {
       setError(`Failed to run pipeline: ${err.message}`)
@@ -319,14 +328,27 @@ function App() {
       return key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
     }
 
-    const cols = Object.keys(results[0]).map(key => ({
-      field: key,
-      headerName: toHeader(key),
-      sortable: true,
-      filter: true,
-      resizable: true,
-      minWidth: 140,
-    }))
+    const cols = Object.keys(results[0]).map(key => {
+      const baseCol = {
+        field: key,
+        headerName: toHeader(key),
+        sortable: true,
+        filter: true,
+        resizable: true,
+        minWidth: 140,
+      }
+
+      if (key === 'reasoning') {
+        return {
+          ...baseCol,
+          autoHeight: true,
+          wrapText: true,
+          cellStyle: { whiteSpace: 'pre-wrap', lineHeight: 1.4 },
+        }
+      }
+
+      return baseCol
+    })
 
     // Add a selection checkbox column to make row selection obvious
     return [
@@ -415,6 +437,20 @@ function App() {
     }
   }
 
+  const handleDeleteRule = async (ruleIndex) => {
+    setLoadingRules(true)
+    try {
+      await axios.delete(`${API_BASE}/taxonomy/${DEFAULT_TAXONOMY_FILE}/override-rules/${ruleIndex}`)
+      setSuccess('Rule deleted from taxonomy')
+      loadOverrideRules()
+      setTimeout(() => setSuccess(null), 4000)
+    } catch (err) {
+      setError(`Failed to delete rule: ${err.message}`)
+    } finally {
+      setLoadingRules(false)
+    }
+  }
+
   const rowData = useMemo(() => results, [results])
 
   return (
@@ -441,14 +477,10 @@ function App() {
       <div className="controls">
         <div className="control-group">
           <label>Result File</label>
-          <select value={selectedFile} onChange={(e) => setSelectedFile(e.target.value)}>
-            <option value="">Select a file...</option>
-            {resultFiles.map(file => (
-              <option key={file.filename} value={file.filename}>
-                {file.filename} ({file.row_count} rows, Iteration {file.iteration})
-              </option>
-            ))}
-          </select>
+          <div style={{ padding: '10px 12px', border: '1px solid #ddd', borderRadius: 6, background: '#f9fafb', minWidth: 260 }}>
+            <div style={{ fontWeight: 600 }}>{selectedFile}</div>
+            <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>Using bundled classified.csv</div>
+          </div>
         </div>
 
         <div className="control-group">
@@ -463,50 +495,51 @@ function App() {
         <button className="btn btn-success" onClick={handleRunWithFeedback} disabled={!selectedFile || loading}>
           {loading ? 'Running...' : `Run Next Iteration (${iteration})`}
         </button>
-
-        <button className="btn btn-secondary" onClick={loadResultFiles}>
-          Refresh Files
-        </button>
       </div>
 
-      {canonicalColumns.length > 0 && (
-        <div className="override-panel">
-          <div className="override-header">
-            <div>
-              <strong>Normalized column names</strong>
-              <div className="override-helper">
-                Adjust how canonicalized columns are labeled in the output. Leave blank to use defaults.
-              </div>
-            </div>
-            <div className="override-actions">
-              <button className="btn btn-secondary" onClick={resetOverrides}>
-                Reset to defaults
-              </button>
-              <button className="btn btn-primary" onClick={handleSaveOverrides} disabled={savingOverrides}>
-                {savingOverrides ? 'Saving...' : 'Save normalized names'}
-              </button>
+      <div className="override-panel">
+        <div className="override-header">
+          <div>
+            <strong>Override rules</strong>
+            <div className="override-helper">
+              Manage classification override rules saved in the taxonomy file.
             </div>
           </div>
+          <div className="override-actions">
+            <button className="btn btn-secondary" onClick={loadOverrideRules} disabled={loadingRules}>
+              {loadingRules ? 'Refreshing...' : 'Refresh rules'}
+            </button>
+          </div>
+        </div>
+        {overrideRules.length === 0 ? (
+          <div className="override-helper">No override rules saved yet.</div>
+        ) : (
           <div className="override-grid">
-            {canonicalColumns.map((col) => (
-              <div className="override-row" key={col.canonical_name}>
-                <div className="override-label">
-                  <div className="override-name">{col.canonical_name}</div>
-                  <div className="override-meta">
-                    {col.relevance_for_spend_analysis} • {col.data_type}
+            {overrideRules.map((rule) => (
+              <div
+                key={rule.index}
+                className="override-row"
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}
+              >
+                <div className="override-label" style={{ flex: 1 }}>
+                  <div className="override-name">Rule #{rule.index + 1}</div>
+                  <div className="override-meta" style={{ whiteSpace: 'pre-wrap' }}>
+                    {rule.rule}
                   </div>
                 </div>
-                <input
-                  type="text"
-                  value={columnOverrides[col.canonical_name] ?? ''}
-                  onChange={(e) => handleOverrideChange(col.canonical_name, e.target.value)}
-                  placeholder={col.canonical_name}
-                />
+                <button
+                  className="btn btn-secondary"
+                  style={{ background: '#fef2f2', color: '#c0392b', borderColor: '#f5c6cb' }}
+                  onClick={() => handleDeleteRule(rule.index)}
+                  disabled={loadingRules}
+                >
+                  Delete
+                </button>
               </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="grid-container">
         {loading ? (
@@ -528,6 +561,7 @@ function App() {
                 rowData={rowData}
                 columnDefs={columnDefs}
                 defaultColDef={defaultColDef}
+                domLayout="normal"
                 rowSelection="multiple"
                 rowMultiSelectWithClick={true}
                 onGridReady={onGridReady}
