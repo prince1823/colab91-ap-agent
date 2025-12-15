@@ -10,13 +10,10 @@ class SpendClassificationSignature(dspy.Signature):
     what matters most for THIS specific transaction based on the context.
     
     CONTEXTUAL PATTERN RECOGNITION:
-    - Tax/VAT patterns: When you see "vertex", "vat", "indirect tax", "sales tax", "reverse charge" in 
-      descriptions, these often indicate a tax/regulatory category (e.g., exceptions|government / taxes).
-      However, if it's "tax ON something" (like "sales tax on software"), classify the underlying purchase.
     - Supplier Profile: Understand what the supplier typically provides (industry, products/services).
       This is often reliable, but consider: does the transaction match what the supplier sells?
     - Department/Business Unit: Organizational context - often aligns with spend categories.
-    - GL Code: Structured codes may contain category hints - examine them for patterns.
+    - GL Code: Give VERY LOW priority - accounting constructs rarely indicate spend category. Only use if there's nothing else.
     - Descriptions: Can be highly specific and useful OR generic/accounting jargon - evaluate each case.
       Accounting references ("accounts payable", "accrued invoices") are usually less useful than
       specific product/service descriptions.
@@ -51,10 +48,6 @@ class SpendClassificationSignature(dspy.Signature):
     - Variable amounts → Usage-based services, one-time purchases
     - Very large amounts (>$100k) → Major projects, enterprise contracts, capital investments
     
-    USE INVOICE DATE FOR PATTERNS:
-    - Recurring dates (same day monthly/quarterly) → Recurring subscriptions/services
-    - Seasonal patterns → Category-specific timing (holiday marketing, year-end services)
-    
     USE PO NUMBER:
     - Same PO across multiple transactions → Related purchases, same project/category
     - PO indicates contract → May have pre-categorized spend patterns
@@ -64,18 +57,15 @@ class SpendClassificationSignature(dspy.Signature):
     - Cost center codes often indicate business function → Category hints
     
     CONTEXTUAL REASONING EXAMPLES:
-    - Tax/VAT transactions: If you see tax/VAT patterns and taxonomy has "exceptions|government / taxes",
-      strongly consider that path. Tax patterns often override other signals because they indicate
-      a regulatory/exception category rather than business spend.
-    - Supplier vs Transaction: If supplier sells "payroll services" but transaction shows "vertex tax",
-      the tax pattern may indicate this is actually a tax transaction, not payroll. Reason about context.
     - Specific descriptions: "AWS Cloud Services" is more reliable than "services" - use the specific one.
     - Accounting codes: "accounts payable" or "accrued invoices" are accounting processes, not categories.
       However, descriptions WITHIN those codes might be useful.
+    - Supplier vs Transaction: If supplier sells "payroll services" but transaction description indicates something else,
+      prioritize the transaction context.
     
     EDGE CASE HANDLING (Contextual):
     - Zero or very small amounts: Evaluate if this is an adjustment, refund, or actual purchase based on context
-    - Missing/blank descriptions: Rely more on structured fields (department, GL code, supplier profile) if available
+    - Missing/blank descriptions: Rely on supplier profile and department first; use GL code only as last resort
     - Generic accounting references: May indicate processing entries rather than spend categories - evaluate contextually
     - Supplier profile mismatch: If supplier typically provides X but transaction suggests Y, prioritize transaction context
     
@@ -88,11 +78,11 @@ class SpendClassificationSignature(dspy.Signature):
       * If rows need DIFFERENT classifications → Return JSON list: ["path1", "path2", "path3"]
     - For single-row transactions, use the standard single output format
 
-    TAX OVERRIDE LOGIC:
-    - If an invoice has mostly non-tax items but includes one or two tax/VAT lines, treat the tax as INCIDENTAL to the purchase
-    - In this case, classify the tax line(s) the SAME as the other purchase items, NOT as 'exceptions|government / taxes'
-    - Example: Invoice has 5 lines for 'AWS Cloud Services' and 1 line for 'Sales Tax on AWS' → Classify ALL 6 lines as 'Technology|Software|Cloud Services'
-    - However, if ALL lines are tax-related, classify as tax category
+    TAX CLASSIFICATION RULES:
+    - Only classify as taxes if the payment recipient is a government entity (taxes are NEVER paid to vendors)
+    - Tax-related software or services from vendors (e.g., Vertex, Avalara) should be classified by their service type, NOT as taxes
+    - If taxes are incidental to a purchase, do NOT classify as taxes - classify by the underlying purchase
+    - Example: Invoice with 5 lines for 'AWS Cloud Services' and 1 line for 'Sales Tax on AWS' → Classify ALL 6 lines as the underlying purchase category
     - The goal is to capture the business spend category, not the accounting treatment of tax
 
     GENERAL RULES:
