@@ -304,11 +304,12 @@ function App() {
 
   const handleOpenFeedback = () => {
     if (selectedRows.length === 0) {
-      setError('Please select at least one row to provide feedback')
+      setError('Please select a row to provide feedback')
       return
     }
+    // Only use the first selected row (single selection)
     setFeedbackModal({
-      rows: selectedRows,
+      rows: [selectedRows[0]],
       filename: 'classified.csv',
       iteration: 0,
     })
@@ -584,13 +585,13 @@ function App() {
       return baseCol
     })
 
-    // Add a selection checkbox column to make row selection obvious
+    // Add a selection checkbox column for single row selection
     return [
       {
         colId: '__select__',
         headerName: '',
         checkboxSelection: true,
-        headerCheckboxSelection: true,
+        headerCheckboxSelection: false, // No header checkbox for single selection
         width: 50,
         pinned: 'left',
         resizable: false,
@@ -639,7 +640,8 @@ function App() {
 
   const onSelectionChanged = useCallback((event) => {
     const selected = event.api.getSelectedRows()
-    setSelectedRows(selected)
+    // Only keep the first selected row (single selection)
+    setSelectedRows(selected.length > 0 ? [selected[0]] : [])
   }, [])
 
 
@@ -682,13 +684,13 @@ function App() {
         </div>
 
         <div className="control-group">
-          <label>✅ Selected Rows</label>
+          <label>✅ Selected Row</label>
           <input 
             type="text" 
-            value={selectedRows.length} 
+            value={selectedRows.length > 0 ? `Row ${selectedRows[0].row_index + 1}` : 'None'} 
             readOnly 
             style={{ 
-              width: '100px',
+              width: '120px',
               textAlign: 'center',
               fontWeight: '700',
               fontSize: '16px',
@@ -697,14 +699,14 @@ function App() {
           />
         </div>
 
-                <button
+        <button 
           className="btn btn-primary" 
           onClick={handleOpenFeedback} 
           disabled={selectedRows.length === 0}
           style={{ marginTop: 'auto' }}
         >
-          💬 Provide Feedback ({selectedRows.length})
-                </button>
+          💬 Provide Feedback
+        </button>
       </div>
 
       <div className="grid-container">
@@ -723,8 +725,8 @@ function App() {
                 columnDefs={columnDefs}
                 defaultColDef={defaultColDef}
                 domLayout="normal"
-                rowSelection="multiple"
-                rowMultiSelectWithClick={true}
+                rowSelection="single"
+                rowMultiSelectWithClick={false}
                 onGridReady={onGridReady}
                 onFirstDataRendered={onFirstDataRendered}
                 onSelectionChanged={onSelectionChanged}

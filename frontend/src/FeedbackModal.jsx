@@ -61,7 +61,7 @@ function FeedbackModal({ modal, onClose, onSubmit, isSubmitting }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Provide Feedback ({feedbackItems.length} items)</h2>
+        <h2>Provide Feedback</h2>
         
         <div style={{ maxHeight: '400px', overflowY: 'auto', marginBottom: '20px' }}>
           {feedbackItems.map((item, idx) => (
