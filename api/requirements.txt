@@ -17,15 +17,16 @@ requests>=2.31.0
 openpyxl>=3.1.5
 pandas>=2.3.3
 
-# Note: The following packages may not work on Vercel due to size limits:
-# - torch (too large for serverless)
-# - sentence-transformers (depends on torch)
-# - faiss-cpu (large binary)
-# - mlflow (large dependencies)
-# - dspy-ai (may have large dependencies)
-# 
-# If you need these, consider:
-# 1. Using a separate backend service (Railway, Render, etc.)
-# 2. Using Vercel's Edge Functions for lighter workloads
-# 3. Using external ML services via API calls
+# LLM / DSPy
+dspy-ai>=3.0.4
+
+# Note: The following heavy ML packages from the local dev environment
+# are intentionally NOT installed on Vercel due to size limits:
+# - torch
+# - sentence-transformers
+# - faiss-cpu
+# - mlflow
+# If you need full ML functionality in production, consider running the
+# backend on a platform with larger limits (Railway, Render, etc.)
+
 
