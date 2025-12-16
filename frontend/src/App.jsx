@@ -7,6 +7,7 @@ import FeedbackModal from './FeedbackModal'
 import './App.css'
 
 // Use environment variable for API base URL, fallback to relative path for Vercel
+// When deployed on Vercel with API in same project, use relative path
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 const DEFAULT_DATASET_ID = 'innova'
 const DEFAULT_FOLDERNAME = 'default'
