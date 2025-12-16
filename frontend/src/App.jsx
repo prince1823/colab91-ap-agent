@@ -78,8 +78,6 @@ const ReasoningCellRenderer = ({ value }) => {
 }
 
 // CSV file path - will be loaded from public folder
-const CSV_FILE_PATH = '/classified.csv'
-
 function App() {
   const gridApiRef = useRef(null)
   const [results, setResults] = useState([])
@@ -193,28 +191,49 @@ function App() {
     }
   }, [])
 
-  // Load CSV file on component mount
+  // Load transactions from API on component mount
   useEffect(() => {
-    const loadCSV = async () => {
-    setLoading(true)
+    const loadTransactions = async () => {
+      setLoading(true)
       try {
-        const response = await fetch(CSV_FILE_PATH)
-        if (!response.ok) {
-          throw new Error(`Failed to load CSV file: ${response.statusText}`)
+        // Load transactions from API with pagination
+        let allRows = []
+        let page = 1
+        const limit = 200 // Load in chunks
+        
+        while (true) {
+          const response = await axios.get(`${API_BASE}/transactions`, {
+            params: {
+              dataset_id: DEFAULT_DATASET_ID,
+              foldername: DEFAULT_FOLDERNAME,
+              page: page,
+              limit: limit
+            }
+          })
+          
+          const transactions = response.data.rows || []
+          if (transactions.length === 0) break
+          
+          allRows = allRows.concat(transactions)
+          
+          // If we got fewer items than the limit, we've reached the end
+          if (transactions.length < limit) break
+          page++
         }
-        const csvText = await response.text()
-        const rows = parseCSV(csvText)
-        setResults(rows)
-    } catch (err) {
-        setError(`Failed to load CSV file: ${err.message}`)
-        console.error('CSV loading error:', err)
-    } finally {
-      setLoading(false)
+        
+        setResults(allRows)
+      } catch (err) {
+        const errorMsg = err.response?.data?.detail || err.message
+        setError(`Failed to load transactions: ${errorMsg}. Make sure the backend is deployed and VITE_API_BASE_URL is set correctly.`)
+        console.error('Transaction loading error:', err)
+        console.error('API_BASE:', API_BASE)
+      } finally {
+        setLoading(false)
+      }
     }
-  }
 
-    loadCSV()
-  }, [parseCSV])
+    loadTransactions()
+  }, [])
 
   // Load feedback on component mount
   useEffect(() => {
