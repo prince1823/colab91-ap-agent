@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: colab91-ap-agent-backend
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: "8000"
+      # Required runtime secrets (set in Render Dashboard)
+      - key: OPENAI_API_KEY
+        value: ""
+      - key: OPENAI_MODEL
+        value: "gpt-4o-mini"
+      - key: CORS_ORIGINS
+        value: "*"
+      # Optional providers
+      - key: ANTHROPIC_API_KEY
+        value: ""
+      - key: EXA_API_KEY
+        value: ""
+
