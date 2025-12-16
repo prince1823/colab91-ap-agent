@@ -1,0 +1,31 @@
+# Core FastAPI dependencies
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+mangum>=0.17.0
+pydantic>=2.12.4
+pydantic-settings>=2.12.0
+python-multipart>=0.0.20
+
+# Database
+sqlalchemy>=2.0.0
+duckdb>=1.0.0
+
+# Utilities
+python-dotenv>=1.2.1
+pyyaml>=6.0.3
+requests>=2.31.0
+openpyxl>=3.1.5
+pandas>=2.3.3
+
+# Note: The following packages may not work on Vercel due to size limits:
+# - torch (too large for serverless)
+# - sentence-transformers (depends on torch)
+# - faiss-cpu (large binary)
+# - mlflow (large dependencies)
+# - dspy-ai (may have large dependencies)
+# 
+# If you need these, consider:
+# 1. Using a separate backend service (Railway, Render, etc.)
+# 2. Using Vercel's Edge Functions for lighter workloads
+# 3. Using external ML services via API calls
+

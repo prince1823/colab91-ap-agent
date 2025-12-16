@@ -6,7 +6,8 @@ import axios from 'axios'
 import FeedbackModal from './FeedbackModal'
 import './App.css'
 
-const API_BASE = 'http://localhost:8000/api/v1'
+// Use environment variable for API base URL, fallback to relative path for Vercel
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 const DEFAULT_DATASET_ID = 'innova'
 const DEFAULT_FOLDERNAME = 'default'
 
